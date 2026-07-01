@@ -1,0 +1,11 @@
+# Éditeurs / IDE
+.idea/
+.vscode/
+*.swp
+
+# Outillage local
+.claude/
+
+# Binaires / artefacts Go
+*.test
+*.out
