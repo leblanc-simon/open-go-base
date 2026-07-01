@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 	"text/template"
 
 	"leblanc.io/open-go-base/appconf"
@@ -44,6 +45,59 @@ func newBundle(t *testing.T) *Bundle {
 		t.Fatalf("New: %v", err)
 	}
 	return b
+}
+
+// newBundleFS construit un Bundle depuis un fs.FS en mémoire (comme le ferait un
+// embed.FS), les locales rangées dans un sous-dossier "locales".
+func newBundleFS(t *testing.T) *Bundle {
+	t.Helper()
+	fsys := fstest.MapFS{
+		"locales/en.yaml": {Data: []byte(enYAML)},
+		"locales/fr.yaml": {Data: []byte(frYAML)},
+		"locales/README":  {Data: []byte("ignoré : pas une locale")},
+	}
+	b, err := NewFS(fsys, "locales", "en")
+	if err != nil {
+		t.Fatalf("NewFS: %v", err)
+	}
+	return b
+}
+
+func TestNewFS(t *testing.T) {
+	b := newBundleFS(t)
+
+	// Langues déduites des fichiers embarqués.
+	got := map[string]bool{}
+	for _, tag := range b.Languages() {
+		got[tag.String()] = true
+	}
+	if !got["en"] || !got["fr"] {
+		t.Errorf("langues attendues en+fr, obtenu %v", b.Languages())
+	}
+
+	// Forçage, données de template, pluriel et repli fonctionnent comme via New.
+	if s := b.Localizer("fr", "").T("hello"); s != "Bonjour" {
+		t.Errorf("T(hello) = %q, want Bonjour", s)
+	}
+	if s := b.Localizer("fr", "").T("greeting", map[string]any{"Name": "Sam"}); s != "Bonjour Sam" {
+		t.Errorf("T(greeting) = %q, want 'Bonjour Sam'", s)
+	}
+	if s := b.Localizer("", "en").Tn("cats", 3); s != "3 cats" {
+		t.Errorf("Tn(cats,3) = %q, want '3 cats'", s)
+	}
+}
+
+func TestNewFS_NoFiles(t *testing.T) {
+	fsys := fstest.MapFS{"locales/README": {Data: []byte("pas de YAML ici")}}
+	if _, err := NewFS(fsys, "locales", "en"); err == nil {
+		t.Error("attendu une erreur quand aucun fichier de traduction n'est présent")
+	}
+}
+
+func TestNewFS_MissingDir(t *testing.T) {
+	if _, err := NewFS(fstest.MapFS{}, "absent", "en"); err == nil {
+		t.Error("attendu une erreur pour un dossier inexistant")
+	}
 }
 
 func TestNew_NoFiles(t *testing.T) {

@@ -2,8 +2,10 @@ package i18n
 
 import (
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -28,20 +30,34 @@ type Bundle struct {
 }
 
 // New charge tous les fichiers de traduction YAML (.yaml, .yml) présents dans
-// cfg.Dir. La langue par défaut (cfg.DefaultLanguage) sert de repli.
+// cfg.Dir sur le système de fichiers. La langue par défaut
+// (cfg.DefaultLanguage) sert de repli. C'est un raccourci vers NewFS sur le
+// disque ; pour embarquer les locales dans le binaire, voir NewFS.
 func New(cfg appconf.I18n) (*Bundle, error) {
-	def, err := language.Parse(cfg.DefaultLanguage)
+	return NewFS(os.DirFS(cfg.Dir), ".", cfg.DefaultLanguage)
+}
+
+// NewFS charge les traductions YAML (.yaml, .yml) depuis dir dans le système de
+// fichiers fsys — typiquement un embed.FS pour livrer les locales dans le
+// binaire. dir est le sous-dossier à lire ("." pour la racine de fsys).
+// defaultLanguage (tag BCP 47, ex. "en") sert de repli.
+//
+//	//go:embed locales/*.yaml
+//	var localesFS embed.FS
+//	bundle, err := i18n.NewFS(localesFS, "locales", "en")
+func NewFS(fsys fs.FS, dir, defaultLanguage string) (*Bundle, error) {
+	def, err := language.Parse(defaultLanguage)
 	if err != nil {
-		return nil, fmt.Errorf("i18n: langue par défaut invalide %q: %w", cfg.DefaultLanguage, err)
+		return nil, fmt.Errorf("i18n: langue par défaut invalide %q: %w", defaultLanguage, err)
 	}
 
 	gb := goi18n.NewBundle(def)
 	gb.RegisterUnmarshalFunc("yaml", yaml.Unmarshal)
 	gb.RegisterUnmarshalFunc("yml", yaml.Unmarshal)
 
-	entries, err := os.ReadDir(cfg.Dir)
+	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
-		return nil, fmt.Errorf("i18n: lecture du dossier %q: %w", cfg.Dir, err)
+		return nil, fmt.Errorf("i18n: lecture du dossier %q: %w", dir, err)
 	}
 
 	loaded := 0
@@ -51,14 +67,20 @@ func New(cfg appconf.I18n) (*Bundle, error) {
 		}
 		switch strings.ToLower(strings.TrimPrefix(filepath.Ext(e.Name()), ".")) {
 		case "yaml", "yml":
-			if _, err := gb.LoadMessageFile(filepath.Join(cfg.Dir, e.Name())); err != nil {
+			buf, err := fs.ReadFile(fsys, path.Join(dir, e.Name()))
+			if err != nil {
+				return nil, fmt.Errorf("i18n: lecture de %q: %w", e.Name(), err)
+			}
+			// ParseMessageFileBytes déduit la langue du nom de fichier
+			// (fr.yaml -> fr) : lui passer le nom, pas un chemin complet.
+			if _, err := gb.ParseMessageFileBytes(buf, e.Name()); err != nil {
 				return nil, fmt.Errorf("i18n: chargement de %q: %w", e.Name(), err)
 			}
 			loaded++
 		}
 	}
 	if loaded == 0 {
-		return nil, fmt.Errorf("i18n: aucun fichier de traduction YAML dans %q", cfg.Dir)
+		return nil, fmt.Errorf("i18n: aucun fichier de traduction YAML dans %q", dir)
 	}
 
 	// La langue par défaut en tête : le matcher l'utilise comme repli quand

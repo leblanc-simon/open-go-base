@@ -1,0 +1,6 @@
+hello: Hello
+greeting: Hello {{.Name}}
+
+cats:
+  one: "{{.Count}} cat"
+  other: "{{.Count}} cats"

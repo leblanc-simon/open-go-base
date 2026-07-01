@@ -319,7 +319,8 @@ Chargement de traductions et sélection de langue, basé sur
 [`go-i18n/v2`](https://github.com/nicksnyder/go-i18n) et `golang.org/x/text`.
 
 ```go
-func New(cfg appconf.I18n) (*Bundle, error)
+func New(cfg appconf.I18n) (*Bundle, error)                   // locales depuis le disque (cfg.Dir)
+func NewFS(fsys fs.FS, dir, defaultLanguage string) (*Bundle, error) // locales embarquées (go:embed)
 
 func (b *Bundle) FromRequest(r *http.Request) *Localizer       // ?lang= puis Accept-Language
 func (b *Bundle) Localizer(force, acceptLanguage string) *Localizer
@@ -336,6 +337,23 @@ func (l *Localizer) Lang() language.Tag                            // langue ré
 Le jeu de langues est **déduit dynamiquement** des fichiers YAML présents dans le dossier
 `I18n.Dir` (extensions `.yaml`, `.yml`). Un fichier par langue, nommé d'après le tag BCP 47.
 Des locales d'exemple sont fournies dans `locales/`.
+
+### Embarquer les locales dans le binaire (`go:embed`)
+
+`New` lit le disque : le dossier `locales/` doit être déployé à côté de l'exécutable. Pour un
+binaire **autonome**, utiliser `NewFS` avec un `embed.FS` — les YAML sont compilés dans le
+binaire. `dir` est le chemin des fichiers dans le FS embarqué (`.` pour la racine).
+
+```go
+import "embed"
+
+//go:embed locales/*.yaml
+var localesFS embed.FS
+
+bundle, err := i18n.NewFS(localesFS, "locales", cfg.I18n.DefaultLanguage)
+```
+
+`New(cfg)` est équivalent à `NewFS(os.DirFS(cfg.Dir), ".", cfg.DefaultLanguage)`.
 
 `locales/fr.yaml` :
 
