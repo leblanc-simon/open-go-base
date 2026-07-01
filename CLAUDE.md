@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Module `leblanc.io/open-go-base` initialisé (Go 1.26). **Tous les sous-packages sont
 implémentés et testés** (`go test -race ./...` au vert) :
-`appconf`, `logx`, `corsx`, `ratelimit`, `i18n`, plus `authx` (login + sessions) et `mfax`
-(2FA TOTP), récupérés/découplés depuis `open-go-canivet`. Reste à faire (brief étape 3) :
-migrer un projet existant dessus comme preuve.
+`appconf`, `logx`, `corsx`, `ratelimit`, `i18n`, plus `authx` (login + sessions), `mfax`
+(2FA TOTP) — récupérés/découplés depuis `open-go-canivet` — et `csrfx` (middleware CSRF
+double-submit cookie, défense en profondeur complémentaire des cookies SameSite d'`authx`).
+Le brief est intégralement couvert : la migration de preuve (étape 3) a été réalisée sur
+`open-go-rdap`. Le dépôt est désormais sous git (import initial en commits par lot logique).
 
 `authx`/`mfax` (hors brief initial) : auth par mot de passe + sessions glissantes et 2FA TOTP,
 en **handlers HTTP montables** + rendu délégué au projet (interface `Renderer`), stockage en
