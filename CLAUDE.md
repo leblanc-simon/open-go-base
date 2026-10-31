@@ -27,9 +27,16 @@ typiquement `cfg.Database.Dialect()` (fragment `appconf.Database{Driver,DSN}`). 
 constructeurs prennent le dialecte. Migrations en sous-dossiers `migrations/<dialecte>/` ;
 placeholders adaptés via `internal/sqldialect.Rebind` (`?`→`$n` en PG) ; `Create` utilise
 `RETURNING` en PG (pas de `LastInsertId`). Booléens stockés en SMALLINT 0/1 partout pour un scan
-Go uniforme. Tests réels en SQLite (modernc) ; PG relu/non exécuté (Rebind + mapping Dialect
-couverts par tests unitaires). Ajouter MySQL = `migrations/mysql/` + branche upsert
+Go uniforme. Tests réels en SQLite (modernc) ; en PostgreSQL 16, migrations et stores ont été
+exécutés pour la première fois par open-go-sbom (sonde et tests d'intégration de son lot T03,
+31 octobre 2026) sans défaut constaté ; pas de test PG ici (il faudrait un pilote en
+dépendance de test). Ajouter MySQL = `migrations/mysql/` + branche upsert
 `ON DUPLICATE KEY` + `supported()`.
+
+Erreurs présentées à l'utilisateur sous forme de **codes stables** (`authx.ErrorCode`,
+`mfax.ErrorCode`, à traduire par le projet ; les champs `Error` gardent le texte français par
+défaut) ; erreurs 400/403/500 rendues par un `ErrorHandler` configurable qui ne renvoie jamais la
+cause au client ; `csrfx.WithFailureHandler` pour la réponse 403 (v1.1.0).
 
 `specs/00-initial.md` est le brief de référence ; il fait foi sur l'architecture, l'API et
 l'ordre d'implémentation. Le lire avant toute tâche. La doc d'utilisation des composants

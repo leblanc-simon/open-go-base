@@ -20,7 +20,12 @@ type Renderer interface {
 type LoginView struct {
 	Next  string // destination post-login à préserver dans le formulaire
 	Email string // email pré-rempli après un échec
-	Error string // message d'erreur à afficher (vide = formulaire vierge)
+	// Code est la nature de l'erreur (vide = formulaire vierge), à traduire par
+	// le projet.
+	Code ErrorCode
+	// Error est le texte français par défaut de Code (DefaultMessage), conservé
+	// pour les projets qui l'affichent tel quel.
+	Error string
 }
 
 // SecondFactor intercale une étape de vérification après la validation du mot de
@@ -40,6 +45,7 @@ type Handlers struct {
 	renderer Renderer
 	sf       SecondFactor
 	homePath string
+	onError  ErrorHandler
 }
 
 // HandlerOption configure les Handlers.
@@ -59,9 +65,21 @@ func WithHomePath(p string) HandlerOption {
 	}
 }
 
+// WithErrorHandler remplace la réponse des erreurs qui interrompent le login
+// (formulaire illisible : 400, CodeInvalidForm ; erreur interne : 500,
+// CodeInternal). Par défaut, un texte brut sans détail technique. Un handler nil
+// est ignoré.
+func WithErrorHandler(eh ErrorHandler) HandlerOption {
+	return func(h *Handlers) {
+		if eh != nil {
+			h.onError = eh
+		}
+	}
+}
+
 // NewHandlers construit les handlers de connexion sur un Manager et un Renderer.
 func NewHandlers(mgr *Manager, renderer Renderer, opts ...HandlerOption) *Handlers {
-	h := &Handlers{mgr: mgr, renderer: renderer, homePath: "/"}
+	h := &Handlers{mgr: mgr, renderer: renderer, homePath: "/", onError: defaultErrorHandler}
 	for _, o := range opts {
 		o(h)
 	}
@@ -85,7 +103,7 @@ func (h *Handlers) LoginGET(w http.ResponseWriter, r *http.Request) {
 // inconnu de mot de passe erroné), pour ne pas faciliter l'énumération.
 func (h *Handlers) LoginPOST(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+		h.onError(w, r, http.StatusBadRequest, CodeInvalidForm, err)
 		return
 	}
 	email := strings.TrimSpace(strings.ToLower(r.PostForm.Get("email")))
@@ -93,7 +111,10 @@ func (h *Handlers) LoginPOST(w http.ResponseWriter, r *http.Request) {
 	next := r.PostForm.Get("next")
 
 	fail := func() {
-		h.renderer.RenderLogin(w, r, LoginView{Next: next, Email: email, Error: "Identifiants invalides"})
+		h.renderer.RenderLogin(w, r, LoginView{
+			Next: next, Email: email,
+			Code: CodeInvalidCredentials, Error: DefaultMessage(CodeInvalidCredentials),
+		})
 	}
 
 	user, err := h.mgr.users.GetByEmail(email)
@@ -110,14 +131,14 @@ func (h *Handlers) LoginPOST(w http.ResponseWriter, r *http.Request) {
 			fail()
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return
 	}
 
 	if h.sf != nil {
 		required, redirectURL, err := h.sf.Begin(w, r, user)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			h.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 			return
 		}
 		if required {
@@ -127,7 +148,7 @@ func (h *Handlers) LoginPOST(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.mgr.OpenSession(w, r, user, PurposeAuth); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return
 	}
 	http.Redirect(w, r, SafeRedirectPath(next, h.homePath), http.StatusSeeOther)

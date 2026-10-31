@@ -243,7 +243,7 @@ Middleware net/http de protection CSRF par **double soumission** (double-submit 
 défense en profondeur par-dessus les cookies `SameSite=Lax` d'`authx`.
 
 ```go
-func New(opts ...Option) *Protector            // WithCookieName/WithFieldName/WithHeaderName/WithSecure
+func New(opts ...Option) *Protector            // WithCookieName/WithFieldName/WithHeaderName/WithSecure/WithFailureHandler
 func (p *Protector) Middleware(next http.Handler) http.Handler
 func (p *Protector) FuncMap(r *http.Request) template.FuncMap // {{ csrfField }} / {{ csrfToken }}
 func Token(r *http.Request) string
@@ -252,6 +252,8 @@ func Token(r *http.Request) string
 Le middleware pose un cookie de jeton aléatoire (256 bits, `HttpOnly`, `SameSite=Lax`) sur les
 requêtes sûres et **rejette en 403** toute requête mutante (`POST`/`PUT`/`PATCH`/`DELETE`) dont
 le jeton (en-tête `X-CSRF-Token` ou champ `csrf_token`) ne correspond pas au cookie.
+`WithFailureHandler(h)` remplace cette réponse 403 (page traduite au format du projet) ; le
+handler reçoit la requête avec le jeton courant dans le contexte (`csrfx.Token`).
 
 ```go
 p := csrfx.New()
@@ -422,7 +424,7 @@ middleware de chargement de session et garde par rôle, handlers de connexion/d�
 le **rendu HTML** (interface `Renderer` : `authx` fournit les données, le projet le template).
 
 ```go
-func New(cfg appconf.Auth, users UserStore, sessions SessionStore) *Manager
+func New(cfg appconf.Auth, users UserStore, sessions SessionStore, opts ...ManagerOption) *Manager
 
 func (m *Manager) LoadSession(next http.Handler) http.Handler          // attache l'utilisateur au contexte
 func (m *Manager) RequireAuth(roles ...Role) func(http.Handler) http.Handler // exige une session (+ rôle)
@@ -438,6 +440,15 @@ func (h *Handlers) LoginGET / LoginPOST / Logout
 
 Configuration via le fragment `appconf.Auth` (`session_ttl`, `cookie_name`, `cookie_secure`
 `auto|on|off`, `bcrypt_cost`).
+
+**Erreurs sous forme de codes.** Les erreurs présentées à l'utilisateur portent un code stable
+(`authx.ErrorCode`) que le projet traduit : `LoginView.Code` vaut `CodeInvalidCredentials`
+après un échec (`LoginView.Error` garde le texte français par défaut, `DefaultMessage(code)`).
+Les erreurs qui interrompent une requête passent par un `ErrorHandler`
+(`func(w, r, status, code, err)`) : `WithErrorHandler` sur les handlers (400
+`CodeInvalidForm`, 500 `CodeInternal`) et `WithManagerErrorHandler` sur le Manager (403
+`CodeForbidden` de `RequireAuth`). `err` porte la cause, à journaliser : la réponse par défaut
+ne la renvoie jamais au client.
 
 ```go
 mgr := authx.New(cfg.Auth, sqlstore.NewUserStore(db), sqlstore.NewSessionStore(db))
@@ -542,6 +553,15 @@ r.Group(func(r chi.Router) {
 Configuration via le fragment `appconf.MFA` (`issuer`, `challenge_ttl`, `max_attempts`).
 `WithOptionalEnrollment()` rend la 2FA facultative (login direct si non configurée). Le QR
 s'obtient via `mfax.QRDataURI(provisioningURL)` (à typer en `template.URL` côté template).
+
+**Erreurs sous forme de codes** (`mfax.ErrorCode`, à traduire par le projet) : `VerifyView.Code`
+et `SetupView.Code` valent `CodeInvalidCode` après un code refusé ; les redirections portent
+des codes (`?error=invalid_code` après `EnablePOST`/`DisablePOST`, `/login?err=2fa_exhausted`
+quand le plafond de tentatives est atteint). `SetupGET` ne reprend du paramètre `?error=` que
+les codes connus : un texte arbitraire n'est jamais réaffiché. `WithErrorHandler` remplace la
+réponse des erreurs 400/500, sans jamais exposer la cause par défaut. `ChallengeCookieName`
+nomme le cookie du challenge en cours (pour relier une tentative à son utilisateur, par
+exemple dans un journal d'audit).
 
 > **Sécurité.** Compteur de tentatives **atomique** (pas de contournement de `max_attempts` par
 > requêtes concurrentes). **Anti-rejeu** : un code TOTP n'est accepté qu'une fois (suivi du

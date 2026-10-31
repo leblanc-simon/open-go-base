@@ -35,6 +35,7 @@ type Protector struct {
 	fieldName  string
 	headerName string
 	secure     string // "auto" | "on" | "off"
+	onFailure  http.Handler
 }
 
 // Option configure le Protector.
@@ -78,6 +79,19 @@ func WithSecure(mode string) Option {
 	}
 }
 
+// WithFailureHandler remplace la réponse d'une requête mutante refusée (jeton
+// absent ou incorrect) : le projet rend ainsi une page traduite à son format. Le
+// handler doit répondre 403 (Forbidden) ; il reçoit la requête avec le jeton
+// courant dans le contexte (Token), ce qui permet de réafficher un formulaire.
+// Un handler nil est ignoré (réponse par défaut : 403 en texte brut).
+func WithFailureHandler(h http.Handler) Option {
+	return func(p *Protector) {
+		if h != nil {
+			p.onFailure = h
+		}
+	}
+}
+
 // New construit un Protector. Sans option, valeurs par défaut sûres.
 func New(opts ...Option) *Protector {
 	p := &Protector{
@@ -85,6 +99,7 @@ func New(opts ...Option) *Protector {
 		fieldName:  defaultFieldName,
 		headerName: defaultHeaderName,
 		secure:     "auto",
+		onFailure:  http.HandlerFunc(defaultFailure),
 	}
 	for _, o := range opts {
 		o(p)
@@ -110,7 +125,7 @@ func (p *Protector) Middleware(next http.Handler) http.Handler {
 		r = r.WithContext(context.WithValue(r.Context(), ctxKeyToken, token))
 
 		if isMutating(r.Method) && !p.validToken(r, token) {
-			http.Error(w, "Forbidden - CSRF token invalide", http.StatusForbidden)
+			p.onFailure.ServeHTTP(w, r)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -184,6 +199,10 @@ func (p *Protector) cookieSecure(r *http.Request) bool {
 		return true
 	}
 	return r != nil && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+func defaultFailure(w http.ResponseWriter, _ *http.Request) {
+	http.Error(w, "Forbidden - CSRF token invalide", http.StatusForbidden)
 }
 
 func isMutating(method string) bool {

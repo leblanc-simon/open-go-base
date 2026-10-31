@@ -33,6 +33,7 @@ type Service struct {
 	chs       ChallengeStore
 	renderer  Renderer
 	enrollReq bool
+	onError   ErrorHandler
 
 	verifyPath string
 	setupPath  string
@@ -82,7 +83,7 @@ func New(cfg appconf.MFA, mgr *authx.Manager, totpStore TOTPStore, chs Challenge
 		cfg.Issuer = defaultIssuer
 	}
 	s := &Service{
-		cfg: cfg, mgr: mgr, totp: totpStore, chs: chs, enrollReq: true,
+		cfg: cfg, mgr: mgr, totp: totpStore, chs: chs, enrollReq: true, onError: defaultErrorHandler,
 		verifyPath: "/login/2fa", setupPath: "/profile/totp/setup", homePath: "/",
 	}
 	for _, o := range opts {
