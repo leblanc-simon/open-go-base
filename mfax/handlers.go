@@ -19,7 +19,10 @@ type Renderer interface {
 
 // VerifyView porte les données de la page de vérification.
 type VerifyView struct {
-	Next  string
+	Next string
+	// Code est la nature de l'erreur (vide = formulaire vierge), à traduire.
+	Code ErrorCode
+	// Error est le texte français par défaut de Code (DefaultMessage).
 	Error string
 }
 
@@ -29,7 +32,12 @@ type SetupView struct {
 	Secret          string
 	ProvisioningURL string
 	QRDataURI       string
-	Error           string
+	// Code est la nature de l'erreur (vide = aucune), à traduire. Seuls les codes
+	// connus sont repris du paramètre ?error= : un texte arbitraire n'est jamais
+	// réaffiché.
+	Code ErrorCode
+	// Error est le texte français par défaut de Code (DefaultMessage).
+	Error string
 }
 
 // VerifyGET affiche la page de saisie du code TOTP. Sans challenge valide en
@@ -40,7 +48,7 @@ func (s *Service) VerifyGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.renderer == nil {
-		http.Error(w, "no renderer", http.StatusInternalServerError)
+		s.onError(w, r, http.StatusInternalServerError, CodeInternal, errNoRenderer)
 		return
 	}
 	s.renderer.RenderVerify(w, r, VerifyView{Next: r.URL.Query().Get("next")})
@@ -50,7 +58,7 @@ func (s *Service) VerifyGET(w http.ResponseWriter, r *http.Request) {
 // challenge et ouvre une session pleinement authentifiée.
 func (s *Service) VerifyPOST(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+		s.onError(w, r, http.StatusBadRequest, CodeInvalidForm, err)
 		return
 	}
 	user, ch, ok := s.loadChallenge(r)
@@ -66,35 +74,35 @@ func (s *Service) VerifyPOST(w http.ResponseWriter, r *http.Request) {
 	// concurrentes lisant le même compteur ne dépasse le plafond (TOCTOU).
 	allowed, err := s.chs.IncrAttempts(ch.Token, s.cfg.MaxAttempts)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return
 	}
 	if !allowed {
 		_ = s.chs.Delete(ch.Token)
 		s.clearChallengeCookie(w, r)
-		http.Redirect(w, r, "/login?err=2fa_exhausted", http.StatusSeeOther)
+		http.Redirect(w, r, "/login?err="+string(CodeAttemptsExhausted), http.StatusSeeOther)
 		return
 	}
 
 	valid, err := s.consumeCode(user.ID, code)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return
 	}
 	if !valid {
 		if s.renderer == nil {
-			http.Error(w, "no renderer", http.StatusInternalServerError)
+			s.onError(w, r, http.StatusInternalServerError, CodeInternal, errNoRenderer)
 			return
 		}
 		w.WriteHeader(http.StatusUnauthorized)
-		s.renderer.RenderVerify(w, r, VerifyView{Next: next, Error: "Code invalide"})
+		s.renderer.RenderVerify(w, r, VerifyView{Next: next, Code: CodeInvalidCode, Error: DefaultMessage(CodeInvalidCode)})
 		return
 	}
 
 	_ = s.chs.Delete(ch.Token)
 	s.clearChallengeCookie(w, r)
 	if _, err := s.mgr.OpenSession(w, r, user, authx.PurposeAuth); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return
 	}
 	http.Redirect(w, r, authx.SafeRedirectPath(next, s.homePath), http.StatusSeeOther)
@@ -121,18 +129,19 @@ func (s *Service) SetupGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.renderer == nil {
-		http.Error(w, "no renderer", http.StatusInternalServerError)
+		s.onError(w, r, http.StatusInternalServerError, CodeInternal, errNoRenderer)
 		return
 	}
 	secret, url, err := s.Provision(user)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return
 	}
 	qrURI, _ := QRDataURI(url)
+	code := codeFromQuery(r.URL.Query().Get("error"))
 	s.renderer.RenderSetup(w, r, SetupView{
 		Secret: secret, ProvisioningURL: url, QRDataURI: qrURI,
-		Error: r.URL.Query().Get("error"),
+		Code: code, Error: DefaultMessage(code),
 	})
 }
 
@@ -146,7 +155,7 @@ func (s *Service) EnablePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+		s.onError(w, r, http.StatusBadRequest, CodeInvalidForm, err)
 		return
 	}
 	code := strings.TrimSpace(r.PostForm.Get("code"))
@@ -159,20 +168,20 @@ func (s *Service) EnablePOST(w http.ResponseWriter, r *http.Request) {
 	// pas être rejoué comme code de connexion juste après l'enrôlement.
 	valid, err := s.consumeCode(user.ID, code)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return
 	}
 	if !valid {
-		http.Redirect(w, r, s.setupPath+"?error="+queryEscape("Code invalide, réessayez"), http.StatusSeeOther)
+		http.Redirect(w, r, s.setupPath+"?error="+string(CodeInvalidCode), http.StatusSeeOther)
 		return
 	}
 	if err := s.totp.Set(user.ID, t.Secret, true); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return
 	}
 	if sess := authx.SessionFrom(r); sess != nil && sess.Purpose == authx.PurposeSetup {
 		if _, err := s.mgr.Elevate(w, r, user); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 			return
 		}
 	}
@@ -193,7 +202,7 @@ func (s *Service) DisablePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+		s.onError(w, r, http.StatusBadRequest, CodeInvalidForm, err)
 		return
 	}
 	t, err := s.totp.Get(user.ID)
@@ -203,28 +212,25 @@ func (s *Service) DisablePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return
 	}
 	code := strings.TrimSpace(r.PostForm.Get("code"))
 	valid, err := s.consumeCode(user.ID, code)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return
 	}
 	if !valid {
-		http.Redirect(w, r, s.homePath+"?error="+queryEscape("Code invalide"), http.StatusSeeOther)
+		http.Redirect(w, r, s.homePath+"?error="+string(CodeInvalidCode), http.StatusSeeOther)
 		return
 	}
 	if err := s.totp.Delete(user.ID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return
 	}
 	http.Redirect(w, r, s.homePath, http.StatusSeeOther)
 }
 
-// queryEscape échappe une valeur pour un paramètre de query (évite d'importer
-// net/url juste pour ça côté handlers).
-func queryEscape(s string) string {
-	return strings.NewReplacer(" ", "+", "&", "%26", "?", "%3F", "#", "%23").Replace(s)
-}
+// errNoRenderer : un handler qui rend une page a été monté sans WithRenderer.
+var errNoRenderer = errors.New("mfax: no renderer")
