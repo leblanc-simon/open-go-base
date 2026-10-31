@@ -276,6 +276,7 @@ avec résolution sûre de l'IP réelle derrière des proxys de confiance.
 ```go
 func New(requestLimit int, trustedProxies []string, opts ...Option) (*Limiter, error)
 func WithLimitHandler(h http.Handler) Option // réponse 429 personnalisée
+func WithKeyFunc(fn func(*http.Request) string) Option // clé de limitation (jeton…)
 
 func (l *Limiter) Middleware(next http.Handler) http.Handler
 func (l *Limiter) ClientIP(r *http.Request) string
@@ -292,6 +293,18 @@ handler := limiter.Middleware(mux)
   verrouiller toute l'application).
 - `WithLimitHandler` remplace la réponse 429 par défaut. Le handler écrit lui-même le statut
   et le corps ; les en-têtes `Retry-After` / `X-RateLimit-*` sont déjà positionnés.
+- `WithKeyFunc` remplace l'IP client comme clé de limitation (une clé vide retombe sur
+  l'IP ; clés et IP ne partagent jamais un compteur). Elle sert à limiter **par jeton**
+  d'API, pour que des clients derrière une même sortie NAT ne se gênent pas. La fonction
+  ne doit renvoyer qu'une valeur déjà authentifiée (identifiant d'un jeton vérifié par un
+  middleware précédent), jamais un en-tête lu tel quel : sinon un client obtiendrait un
+  compteur neuf à chaque requête.
+
+```go
+limiter, _ := ratelimit.New(perMinute, cfg.Web.TrustedProxies,
+	ratelimit.WithKeyFunc(func(r *http.Request) string { return tokenIDFrom(r.Context()) }))
+handler := authenticate(limiter.Middleware(api)) // la clé est posée par authenticate
+```
 
 ```go
 limiter, _ := ratelimit.New(cfg.Web.RateLimit, cfg.Web.TrustedProxies,

@@ -19,6 +19,24 @@ type Option func(*settings)
 
 type settings struct {
 	limitHandler http.HandlerFunc
+	keyFunc      func(*http.Request) string
+}
+
+// WithKeyFunc remplace l'IP client comme clé de limitation : chaque valeur renvoyée par
+// fn a son propre compteur. Une clé vide retombe sur l'IP client (ClientIP). Les clés de
+// fn et les IP ne partagent jamais un compteur.
+//
+// Usage typique : limiter par jeton d'API, pour que des clients derrière une même sortie
+// NAT ne se gênent pas. fn ne doit renvoyer qu'une valeur déjà authentifiée (p. ex.
+// l'identifiant d'un jeton vérifié par un middleware précédent) : une clé lue telle
+// quelle dans la requête permettrait à un client d'obtenir un compteur neuf à chaque
+// requête. Une fonction nil est ignorée.
+func WithKeyFunc(fn func(r *http.Request) string) Option {
+	return func(s *settings) {
+		if fn != nil {
+			s.keyFunc = fn
+		}
+	}
 }
 
 // WithLimitHandler définit le handler appelé lorsqu'une requête dépasse le seuil,
@@ -77,7 +95,12 @@ func New(requestLimit int, trustedProxies []string, opts ...Option) (*Limiter, e
 	if requestLimit > 0 {
 		hropts := []httprate.Option{
 			httprate.WithKeyFuncs(func(r *http.Request) (string, error) {
-				return l.ClientIP(r), nil
+				if s.keyFunc != nil {
+					if k := s.keyFunc(r); k != "" {
+						return "key:" + k, nil
+					}
+				}
+				return "ip:" + l.ClientIP(r), nil
 			}),
 		}
 		if s.limitHandler != nil {

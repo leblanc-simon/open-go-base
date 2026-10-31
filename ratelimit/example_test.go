@@ -1,6 +1,7 @@
 package ratelimit_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -27,4 +28,27 @@ func ExampleLimiter_ClientIP() {
 	// Output:
 	// 203.0.113.7
 	// 203.0.113.9
+}
+
+// ExampleWithKeyFunc limite par jeton plutôt que par IP : la clé vient d'un middleware
+// d'authentification précédent, jamais d'un en-tête lu tel quel.
+func ExampleWithKeyFunc() {
+	type tokenKey struct{}
+	l, _ := ratelimit.New(1, nil, ratelimit.WithKeyFunc(func(r *http.Request) string {
+		id, _ := r.Context().Value(tokenKey{}).(string)
+		return id
+	}))
+	h := l.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	for _, token := range []string{"jeton-a", "jeton-a", "jeton-b"} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r = r.WithContext(context.WithValue(r.Context(), tokenKey{}, token))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		fmt.Println(token, rec.Code)
+	}
+
+	// Output:
+	// jeton-a 200
+	// jeton-a 429
+	// jeton-b 200
 }

@@ -16,6 +16,11 @@
 //	limiter, _ := ratelimit.New(cfg.Web.RateLimit, cfg.Web.TrustedProxies,
 //		ratelimit.WithLimitHandler(myHandler))
 //
+// La clé de limitation est l'IP client par défaut ; WithKeyFunc la remplace, par
+// exemple par l'identifiant d'un jeton d'API déjà authentifié, pour que des clients
+// derrière une même sortie NAT aient chacun leur compteur. Une clé vide retombe sur
+// l'IP.
+//
 // Sécurité : les en-têtes X-Forwarded-For / X-Real-IP ne sont pris en compte que
 // si la connexion directe (RemoteAddr) provient d'un proxy listé dans
 // TrustedProxies ; sinon l'IP de la connexion est utilisée. Un client direct qui
