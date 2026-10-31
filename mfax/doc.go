@@ -33,4 +33,12 @@
 // (restreinte), élevée en session authentifiée une fois le TOTP confirmé.
 // WithOptionalEnrollment rend la 2FA facultative (login direct si non
 // configurée).
+//
+// # Verrouillage par compte
+//
+// WithLockout compte les codes faux par compte, tous défis confondus (un nouveau
+// défi s'obtient en rejouant le mot de passe : le plafond par défi ne borne donc
+// pas une force brute). Au seuil, le compte est verrouillé pour une durée qui
+// double à chaque récidive ; Confirm offre la même vérification hors connexion
+// (réauthentification avant une action sensible).
 package mfax

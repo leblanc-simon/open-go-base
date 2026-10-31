@@ -1,6 +1,6 @@
 // Package sqlstore fournit une implémentation database/sql des stores de mfax
-// (TOTPStore, ChallengeStore) et les migrations du schéma associé (tables
-// dédiées mfa_totp et mfa_challenges).
+// (TOTPStore, ChallengeStore, LockoutStore) et les migrations du schéma associé
+// (tables dédiées mfa_totp, mfa_challenges et mfa_lockouts).
 //
 // Plusieurs dialectes sont gérés (SQLite, PostgreSQL) ; le dialecte est passé à
 // Migrate et aux constructeurs via appconf.Dialect (typiquement
@@ -185,4 +185,75 @@ func boolToInt(b bool) int {
 var (
 	_ mfax.TOTPStore      = (*TOTPStore)(nil)
 	_ mfax.ChallengeStore = (*ChallengeStore)(nil)
+	_ mfax.LockoutStore   = (*LockoutStore)(nil)
 )
+
+// LockoutStore implémente mfax.LockoutStore sur une base SQL (table mfa_lockouts).
+type LockoutStore struct {
+	db      *sql.DB
+	dialect appconf.Dialect
+}
+
+// NewLockoutStore construit un LockoutStore sur db pour le dialecte d.
+func NewLockoutStore(db *sql.DB, d appconf.Dialect) *LockoutStore {
+	return &LockoutStore{db: db, dialect: d}
+}
+
+func (s *LockoutStore) rb(q string) string { return sqldialect.Rebind(s.dialect, q) }
+
+// LockedUntil renvoie la fin du verrouillage en cours, ou l'instant zéro.
+func (s *LockoutStore) LockedUntil(userID int64, now time.Time) (time.Time, error) {
+	var until int64
+	err := s.db.QueryRow(s.rb(`SELECT locked_until FROM mfa_lockouts WHERE user_id = ?`), userID).Scan(&until)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	if until <= now.Unix() {
+		return time.Time{}, nil
+	}
+	return time.Unix(until, 0), nil
+}
+
+// Fail compte un échec. L'upsert repart d'une nouvelle fenêtre si la précédente est
+// close ; le verrouillage n'est posé que par l'UPDATE conditionnel (seuil atteint,
+// palier inchangé) : deux échecs concurrents ne verrouillent qu'une fois.
+func (s *LockoutStore) Fail(userID int64, now time.Time, p mfax.LockoutPolicy) (time.Time, error) {
+	at := now.Unix()
+	cutoff := now.Add(-p.Window).Unix()
+	if _, err := s.db.Exec(s.rb(`INSERT INTO mfa_lockouts (user_id, failures, window_start) VALUES (?, 1, ?)
+		ON CONFLICT(user_id) DO UPDATE SET
+		    failures = CASE WHEN mfa_lockouts.window_start <= ? THEN 1 ELSE mfa_lockouts.failures + 1 END,
+		    window_start = CASE WHEN mfa_lockouts.window_start <= ? THEN excluded.window_start ELSE mfa_lockouts.window_start END`),
+		userID, at, cutoff, cutoff); err != nil {
+		return time.Time{}, err
+	}
+	var failures, lockouts int
+	if err := s.db.QueryRow(s.rb(`SELECT failures, lockouts FROM mfa_lockouts WHERE user_id = ?`), userID).
+		Scan(&failures, &lockouts); err != nil {
+		return time.Time{}, err
+	}
+	if failures < p.Threshold {
+		return time.Time{}, nil
+	}
+	until := now.Add(p.LockDuration(lockouts)).Unix()
+	res, err := s.db.Exec(s.rb(`UPDATE mfa_lockouts
+		   SET failures = 0, window_start = ?, lockouts = lockouts + 1, locked_until = ?
+		 WHERE user_id = ? AND failures >= ? AND lockouts = ?`),
+		at, until, userID, p.Threshold, lockouts)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return time.Time{}, err
+	}
+	return time.Unix(until, 0), nil
+}
+
+// Reset efface les échecs et le palier de verrouillage de l'utilisateur.
+func (s *LockoutStore) Reset(userID int64) error {
+	_, err := s.db.Exec(s.rb(`DELETE FROM mfa_lockouts WHERE user_id = ?`), userID)
+	return err
+}

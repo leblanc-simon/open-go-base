@@ -69,6 +69,15 @@ func (s *Service) VerifyPOST(w http.ResponseWriter, r *http.Request) {
 	code := strings.TrimSpace(r.PostForm.Get("code"))
 	next := r.PostForm.Get("next")
 
+	// Un compte verrouillé n'examine aucun code : le défi est abandonné.
+	if until, err := s.LockedUntil(user.ID); err != nil {
+		s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
+		return
+	} else if !until.IsZero() {
+		s.dropChallenge(w, r, ch, lockedPath)
+		return
+	}
+
 	// Incrément atomique borné par MaxAttempts : si allowed est false, le
 	// plafond est déjà atteint. L'atomicité évite qu'un lot de requêtes
 	// concurrentes lisant le même compteur ne dépasse le plafond (TOCTOU).
@@ -78,9 +87,7 @@ func (s *Service) VerifyPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !allowed {
-		_ = s.chs.Delete(ch.Token)
-		s.clearChallengeCookie(w, r)
-		http.Redirect(w, r, "/login?err="+string(CodeAttemptsExhausted), http.StatusSeeOther)
+		s.dropChallenge(w, r, ch, "/login?err="+string(CodeAttemptsExhausted))
 		return
 	}
 
@@ -90,6 +97,15 @@ func (s *Service) VerifyPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !valid {
+		locked, err := s.recordFailure(r, user)
+		if err != nil {
+			s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
+			return
+		}
+		if locked {
+			s.dropChallenge(w, r, ch, lockedPath)
+			return
+		}
 		if s.renderer == nil {
 			s.onError(w, r, http.StatusInternalServerError, CodeInternal, errNoRenderer)
 			return
@@ -99,6 +115,12 @@ func (s *Service) VerifyPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.lockout != nil {
+		if err := s.lockout.Reset(user.ID); err != nil {
+			s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
+			return
+		}
+	}
 	_ = s.chs.Delete(ch.Token)
 	s.clearChallengeCookie(w, r)
 	if _, err := s.mgr.OpenSession(w, r, user, authx.PurposeAuth); err != nil {
@@ -106,6 +128,13 @@ func (s *Service) VerifyPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, authx.SafeRedirectPath(next, s.homePath), http.StatusSeeOther)
+}
+
+// dropChallenge abandonne le défi en cours et renvoie vers target.
+func (s *Service) dropChallenge(w http.ResponseWriter, r *http.Request, ch *Challenge, target string) {
+	_ = s.chs.Delete(ch.Token)
+	s.clearChallengeCookie(w, r)
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
 // SetupGET génère un nouveau secret TOTP et affiche la page de configuration
@@ -191,10 +220,11 @@ func (s *Service) EnablePOST(w http.ResponseWriter, r *http.Request) {
 // DisablePOST désactive et supprime le secret TOTP de l'utilisateur courant.
 // À monter derrière une session authentifiée (RequireAuth).
 //
-// Step-up : la désactivation exige un code TOTP valide dans le champ "code".
-// Sans cette ré-authentification, une session compromise (ou une CSRF qui
-// passerait la barrière SameSite) pourrait retirer le second facteur sans
-// preuve de possession. Sans 2FA active, l'opération est un no-op idempotent.
+// Step-up : la désactivation exige un code TOTP valide dans le champ "code"
+// (Confirm : anti-rejeu et verrouillage par compte). Sans cette
+// ré-authentification, une session compromise (ou une CSRF qui passerait la
+// barrière SameSite) pourrait retirer le second facteur sans preuve de
+// possession. Sans 2FA active, l'opération est un no-op idempotent.
 func (s *Service) DisablePOST(w http.ResponseWriter, r *http.Request) {
 	user := authx.UserFrom(r)
 	if user == nil {
@@ -216,7 +246,11 @@ func (s *Service) DisablePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := strings.TrimSpace(r.PostForm.Get("code"))
-	valid, err := s.consumeCode(user.ID, code)
+	valid, err := s.Confirm(r, user, code)
+	if errors.Is(err, ErrLocked) {
+		http.Redirect(w, r, s.homePath+"?error="+string(CodeLocked), http.StatusSeeOther)
+		return
+	}
 	if err != nil {
 		s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return

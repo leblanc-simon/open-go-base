@@ -243,7 +243,7 @@ Middleware net/http de protection CSRF par **double soumission** (double-submit 
 défense en profondeur par-dessus les cookies `SameSite=Lax` d'`authx`.
 
 ```go
-func New(opts ...Option) *Protector            // WithCookieName/WithFieldName/WithHeaderName/WithSecure/WithFailureHandler
+func New(opts ...Option) *Protector            // WithCookieName/WithFieldName/WithHeaderName/WithSecure/WithFailureHandler/WithSessionBinding
 func (p *Protector) Middleware(next http.Handler) http.Handler
 func (p *Protector) FuncMap(r *http.Request) template.FuncMap // {{ csrfField }} / {{ csrfToken }}
 func Token(r *http.Request) string
@@ -255,6 +255,14 @@ le jeton (en-tête `X-CSRF-Token` ou champ `csrf_token`) ne correspond pas au co
 `WithFailureHandler(h)` remplace cette réponse 403 (page traduite au format du projet) ; le
 handler reçoit la requête avec le jeton courant dans le contexte (`csrfx.Token`).
 
+`WithSessionBinding(func(*http.Request) string)` **lie le jeton à la session** : le jeton à
+présenter devient `HMAC-SHA256(clé = cookie, message = secret de session)`, rendu tel quel par
+`Token`/`FuncMap`. Un attaquant capable d'écrire le cookie (sous-domaine, HTTP en clair) ne peut
+plus forger un couple cookie-champ valable sans le secret de session de la victime. Un
+changement de session (connexion, déconnexion) invalide les formulaires affichés avant.
+`WithCookieName("__Host-csrf_token")` interdit en plus l'écrasement du cookie depuis un
+sous-domaine (le préfixe exige `Secure` : à réserver à `WithSecure("on")`).
+
 ```go
 p := csrfx.New()
 handler := p.Middleware(mux)
@@ -262,9 +270,10 @@ handler := p.Middleware(mux)
 // AJAX : renvoyer csrfx.Token(r) dans l'en-tête X-CSRF-Token.
 ```
 
-> **Modèle de menace.** Le jeton est porté par un cookie non signé : on suppose qu'un attaquant
-> ne peut pas écrire ce cookie sur le domaine. **Évitez de partager un domaine parent avec des
-> sous-domaines non fiables.** SameSite=Lax reste la première barrière ; `csrfx` la renforce.
+> **Modèle de menace.** Sans `WithSessionBinding`, le jeton est porté par un cookie non signé :
+> on suppose qu'un attaquant ne peut pas écrire ce cookie sur le domaine. **Évitez de partager un
+> domaine parent avec des sous-domaines non fiables**, ou liez le jeton à la session.
+> SameSite=Lax reste la première barrière ; `csrfx` la renforce.
 
 ---
 
@@ -563,7 +572,8 @@ r.Group(func(r chi.Router) {
 })
 ```
 
-Configuration via le fragment `appconf.MFA` (`issuer`, `challenge_ttl`, `max_attempts`).
+Configuration via le fragment `appconf.MFA` (`issuer`, `challenge_ttl`, `max_attempts`, et
+`lockout_*` pour le verrouillage par compte).
 `WithOptionalEnrollment()` rend la 2FA facultative (login direct si non configurée). Le QR
 s'obtient via `mfax.QRDataURI(provisioningURL)` (à typer en `template.URL` côté template).
 
@@ -574,7 +584,19 @@ quand le plafond de tentatives est atteint). `SetupGET` ne reprend du paramètre
 les codes connus : un texte arbitraire n'est jamais réaffiché. `WithErrorHandler` remplace la
 réponse des erreurs 400/500, sans jamais exposer la cause par défaut. `ChallengeCookieName`
 nomme le cookie du challenge en cours (pour relier une tentative à son utilisateur, par
-exemple dans un journal d'audit).
+exemple dans un journal d'audit) ; `WithChallengeCookieName` le renomme (préfixe `__Host-`) et
+`Service.ChallengeCookieName()` renvoie le nom effectif.
+
+**Verrouillage par compte** (`WithLockout(mfasql.NewLockoutStore(db, d))`, migration `003`) : le
+plafond `max_attempts` ne vaut que par défi, et un nouveau défi s'obtient en rejouant le mot de
+passe. Le verrouillage compte les codes faux **par compte**, tous défis confondus : au-delà de
+`lockout_threshold` (10) codes faux dans `lockout_window` (15 min), le compte est verrouillé
+`lockout_duration` (15 min), durée doublée à chaque récidive jusqu'à `lockout_max_duration`
+(24 h) ; un code juste efface le compteur. Compte verrouillé : `Begin` n'ouvre plus de défi et
+renvoie vers `/login?err=2fa_locked` (`CodeLocked`), `VerifyPOST` abandonne le défi sans
+examiner le code. `WithLockoutHook` est appelé à chaque verrouillage (journal d'audit, alerte).
+`Confirm(r, user, code)` vérifie un code hors connexion (réauthentification avant une action
+sensible) avec anti-rejeu et verrouillage (`ErrLocked`) ; `DisablePOST` s'en sert.
 
 > **Sécurité.** Compteur de tentatives **atomique** (pas de contournement de `max_attempts` par
 > requêtes concurrentes). **Anti-rejeu** : un code TOTP n'est accepté qu'une fois (suivi du

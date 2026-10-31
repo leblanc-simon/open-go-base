@@ -116,3 +116,67 @@ func TestChallengeStoreRoundTripAndPurge(t *testing.T) {
 		t.Errorf("challenge expiré toujours présent: %v", err)
 	}
 }
+
+func TestLockoutStore(t *testing.T) {
+	db := openDB(t)
+	store := sqlstore.NewLockoutStore(db, appconf.DialectSQLite)
+	p := mfax.LockoutPolicy{Threshold: 3, Window: 15 * time.Minute, Duration: 10 * time.Minute, MaxDuration: 30 * time.Minute}
+	t0 := time.Unix(1_800_000_000, 0)
+
+	fail := func(at time.Time) time.Time {
+		t.Helper()
+		until, err := store.Fail(9, at, p)
+		if err != nil {
+			t.Fatalf("fail: %v", err)
+		}
+		return until
+	}
+	locked := func(at time.Time) time.Time {
+		t.Helper()
+		until, err := store.LockedUntil(9, at)
+		if err != nil {
+			t.Fatalf("lockedUntil: %v", err)
+		}
+		return until
+	}
+
+	if !locked(t0).IsZero() {
+		t.Fatal("compte inconnu verrouillé")
+	}
+	// Deux échecs, puis la fenêtre se ferme : le compteur repart de un.
+	fail(t0)
+	fail(t0.Add(time.Minute))
+	if !fail(t0.Add(16*time.Minute)).IsZero() || !fail(t0.Add(17*time.Minute)).IsZero() {
+		t.Fatal("verrouillage malgré la fenêtre close")
+	}
+	until := fail(t0.Add(18 * time.Minute))
+	if want := t0.Add(28 * time.Minute); !until.Equal(want) {
+		t.Fatalf("premier verrouillage jusqu'à %v, attendu %v", until, want)
+	}
+	if got := locked(t0.Add(20 * time.Minute)); !got.Equal(until) {
+		t.Fatalf("lockedUntil pendant le verrouillage : %v", got)
+	}
+	if !locked(until).IsZero() {
+		t.Fatal("verrouillage encore actif à son échéance")
+	}
+	// Récidive : durée doublée, puis plafonnée.
+	at := until
+	for i, want := range []time.Duration{20 * time.Minute, 30 * time.Minute, 30 * time.Minute} {
+		fail(at)
+		fail(at)
+		got := fail(at)
+		if !got.Equal(at.Add(want)) {
+			t.Fatalf("verrouillage %d jusqu'à %v, attendu +%s", i+2, got, want)
+		}
+		at = got
+	}
+	// Un succès efface tout : le verrouillage suivant repart de la première durée.
+	if err := store.Reset(9); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	fail(at)
+	fail(at)
+	if got := fail(at); !got.Equal(at.Add(10 * time.Minute)) {
+		t.Fatalf("après Reset : %v", got)
+	}
+}
