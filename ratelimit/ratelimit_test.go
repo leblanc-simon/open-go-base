@@ -181,6 +181,51 @@ func TestMiddleware_DistinctClientsIndependent(t *testing.T) {
 	}
 }
 
+// Clé configurable : deux jetons derrière la même IP ont chacun leur compteur ; une
+// requête sans clé retombe sur l'IP, sans partager le compteur d'une clé.
+func TestMiddleware_WithKeyFunc(t *testing.T) {
+	l, err := New(1, nil, WithKeyFunc(func(r *http.Request) string { return r.Header.Get("X-Test-Key") }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := l.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	steps := []struct {
+		key  string
+		want int
+	}{
+		{"a", http.StatusOK},
+		{"a", http.StatusTooManyRequests},
+		{"b", http.StatusOK},
+		{"", http.StatusOK},
+		{"", http.StatusTooManyRequests},
+		// Une clé égale à l'IP ne partage pas le compteur de l'IP.
+		{"203.0.113.1", http.StatusOK},
+	}
+	for i, s := range steps {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, newReq("203.0.113.1:1000", map[string]string{"X-Test-Key": s.key}))
+		if rec.Code != s.want {
+			t.Errorf("étape %d, clé %q : %d, attendu %d", i, s.key, rec.Code, s.want)
+		}
+	}
+}
+
+func TestWithKeyFunc_NilIgnored(t *testing.T) {
+	l, err := New(1, nil, WithKeyFunc(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := l.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	h.ServeHTTP(httptest.NewRecorder(), newReq("203.0.113.1:1000", nil))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, newReq("203.0.113.1:1000", nil))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("fonction nil : %d, attendu 429 (limitation par IP)", rec.Code)
+	}
+}
+
 func TestMiddleware_DisabledWhenLimitZero(t *testing.T) {
 	l, err := New(0, nil)
 	if err != nil {

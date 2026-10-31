@@ -170,7 +170,9 @@ Pas de `Makefile` dans ce module (bibliothèque). L'injection de version
 - `corsx.Middleware(cfg appconf.CORS) func(http.Handler) http.Handler`.
 - `ratelimit.New(cfg.Web.RateLimit, cfg.Web.TrustedProxies, opts...) (*Limiter, error)` →
   `.Middleware`, `.ClientIP(r)`. Option `WithLimitHandler(http.Handler)` pour personnaliser
-  la réponse 429 (corps JSON localisé, etc.).
+  la réponse 429 (corps JSON localisé, etc.) ; option `WithKeyFunc(func(*http.Request)
+  string)` pour limiter par une autre clé que l'IP (jeton déjà authentifié ; clé vide →
+  IP ; clés et IP dans des espaces distincts).
 - `i18n.New(cfg appconf.I18n) (*Bundle, error)` → `.FromRequest(r)` / `.Localizer(force,
   acceptLang)` → `Localizer.T/Tn/FuncMap/Lang`. Langues déduites des fichiers de `cfg.Dir`.
 
