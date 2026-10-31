@@ -34,6 +34,10 @@ type Service struct {
 	renderer  Renderer
 	enrollReq bool
 	onError   ErrorHandler
+	lockout   LockoutStore
+	onLock    LockoutHook
+	policy    LockoutPolicy
+	cookie    string
 
 	verifyPath string
 	setupPath  string
@@ -51,6 +55,18 @@ func WithRenderer(r Renderer) Option { return func(s *Service) { s.renderer = r 
 // configuré se connecte directement, sans être forcé vers la page de
 // configuration. Par défaut, l'enrôlement est obligatoire.
 func WithOptionalEnrollment() Option { return func(s *Service) { s.enrollReq = false } }
+
+// WithChallengeCookieName change le nom du cookie du défi en cours (défaut
+// "mfa_challenge"), par exemple pour le préfixe "__Host-", qui interdit à un
+// sous-domaine de l'écraser (il exige l'attribut Secure). Une valeur vide garde le
+// défaut.
+func WithChallengeCookieName(name string) Option {
+	return func(s *Service) {
+		if name != "" {
+			s.cookie = name
+		}
+	}
+}
 
 // WithPaths personnalise les chemins de redirection (vérification, configuration
 // TOTP, accueil). Les valeurs vides conservent les défauts (/login/2fa,
@@ -85,6 +101,8 @@ func New(cfg appconf.MFA, mgr *authx.Manager, totpStore TOTPStore, chs Challenge
 	s := &Service{
 		cfg: cfg, mgr: mgr, totp: totpStore, chs: chs, enrollReq: true, onError: defaultErrorHandler,
 		verifyPath: "/login/2fa", setupPath: "/profile/totp/setup", homePath: "/",
+		policy: lockoutPolicy(cfg.LockoutThreshold, cfg.LockoutWindow, cfg.LockoutDuration, cfg.LockoutMaxDuration),
+		cookie: challengeCookieName,
 	}
 	for _, o := range opts {
 		o(s)
@@ -164,7 +182,13 @@ func (s *Service) Enabled(userID int64) bool {
 	return err == nil && t.Enabled
 }
 
+// ChallengeCookieName renvoie le nom du cookie du défi en cours (cf.
+// WithChallengeCookieName).
+func (s *Service) ChallengeCookieName() string { return s.cookie }
+
 // Begin implémente authx.SecondFactor. Après un mot de passe valide :
+//   - compte verrouillé (WithLockout) : renvoie vers /login?err=2fa_locked sans
+//     ouvrir de défi ;
 //   - TOTP actif : crée un challenge, pose le cookie, redirige vers la page de
 //     vérification ;
 //   - pas de TOTP et enrôlement obligatoire : ouvre une session de configuration
@@ -179,6 +203,11 @@ func (s *Service) Begin(w http.ResponseWriter, r *http.Request, user *authx.User
 			return false, "", err
 		}
 		return true, s.setupPath, nil
+	}
+	if until, err := s.LockedUntil(user.ID); err != nil {
+		return false, "", err
+	} else if !until.IsZero() {
+		return true, lockedPath, nil
 	}
 
 	token, err := authx.RandomToken()
@@ -197,7 +226,7 @@ func (s *Service) Begin(w http.ResponseWriter, r *http.Request, user *authx.User
 
 func (s *Service) setChallengeCookie(w http.ResponseWriter, r *http.Request, token string, expiry time.Time) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     challengeCookieName,
+		Name:     s.cookie,
 		Value:    token,
 		Path:     "/",
 		Expires:  expiry,
@@ -209,7 +238,7 @@ func (s *Service) setChallengeCookie(w http.ResponseWriter, r *http.Request, tok
 
 func (s *Service) clearChallengeCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     challengeCookieName,
+		Name:     s.cookie,
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
@@ -223,7 +252,7 @@ func (s *Service) clearChallengeCookie(w http.ResponseWriter, r *http.Request) {
 // associé. Refuse un challenge expiré (au-delà de son TTL) ou pointant vers un
 // compte inactif.
 func (s *Service) loadChallenge(r *http.Request) (*authx.User, *Challenge, bool) {
-	c, err := r.Cookie(challengeCookieName)
+	c, err := r.Cookie(s.cookie)
 	if err != nil || c.Value == "" {
 		return nil, nil, false
 	}

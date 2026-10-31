@@ -69,6 +69,12 @@ type MFA struct {
 	Issuer       string        `yaml:"issuer"        env:"MFA_ISSUER"        env-default:"open-go-base" env-description:"Issuer shown in authenticator apps"`
 	ChallengeTTL time.Duration `yaml:"challenge_ttl" env:"MFA_CHALLENGE_TTL" env-default:"10m"          env-description:"Lifetime of a pending 2FA challenge"`
 	MaxAttempts  int           `yaml:"max_attempts"  env:"MFA_MAX_ATTEMPTS"  env-default:"5"            env-description:"Max verification attempts before a challenge is dropped"`
+	// Verrouillage par compte (mfax.WithLockout) : codes faux tolérés dans la fenêtre,
+	// puis verrouillage doublé à chaque récidive, plafonné.
+	LockoutThreshold   int           `yaml:"lockout_threshold"    env:"MFA_LOCKOUT_THRESHOLD"    env-default:"10"  env-description:"Wrong codes per account within the lockout window before the account is locked (mfax.WithLockout)"`
+	LockoutWindow      time.Duration `yaml:"lockout_window"       env:"MFA_LOCKOUT_WINDOW"       env-default:"15m" env-description:"Window in which wrong codes are counted"`
+	LockoutDuration    time.Duration `yaml:"lockout_duration"     env:"MFA_LOCKOUT_DURATION"     env-default:"15m" env-description:"First lockout duration, doubled at each new lockout"`
+	LockoutMaxDuration time.Duration `yaml:"lockout_max_duration" env:"MFA_LOCKOUT_MAX_DURATION" env-default:"24h" env-description:"Maximum lockout duration"`
 }
 
 // Dialect identifie le moteur SQL ciblé. Il sélectionne le jeu de migrations et

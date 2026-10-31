@@ -15,6 +15,10 @@ const (
 	// abandonné. C'est la valeur du paramètre ?err= de la redirection vers
 	// /login.
 	CodeAttemptsExhausted ErrorCode = "2fa_exhausted"
+	// CodeLocked : compte verrouillé après trop de codes faux (WithLockout). C'est
+	// la valeur du paramètre ?err= de la redirection vers /login, et du paramètre
+	// ?error= de la redirection de DisablePOST.
+	CodeLocked ErrorCode = "2fa_locked"
 	// CodeInvalidForm : corps de formulaire illisible (400).
 	CodeInvalidForm ErrorCode = "invalid_form"
 	// CodeInternal : erreur interne (stockage, aléa, rendu absent…) ; le détail
@@ -22,7 +26,10 @@ const (
 	CodeInternal ErrorCode = "internal"
 )
 
-// ChallengeCookieName est le nom du cookie qui porte le challenge en cours entre
+// lockedPath est la redirection d'un compte verrouillé.
+const lockedPath = "/login?err=" + string(CodeLocked)
+
+// ChallengeCookieName est le nom par défaut du cookie qui porte le challenge en cours entre
 // le mot de passe et le code TOTP. Exposé pour qu'un projet relie une tentative
 // à son challenge (journal d'audit), jamais pour le modifier.
 const ChallengeCookieName = challengeCookieName
@@ -30,6 +37,7 @@ const ChallengeCookieName = challengeCookieName
 var defaultMessages = map[ErrorCode]string{
 	CodeInvalidCode:       "Code invalide",
 	CodeAttemptsExhausted: "Trop de tentatives",
+	CodeLocked:            "Trop de codes refusés : réessayez plus tard",
 	CodeInvalidForm:       "invalid form",
 	CodeInternal:          "Erreur interne",
 }
