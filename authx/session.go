@@ -30,11 +30,27 @@ type Manager struct {
 	users     UserStore
 	sessions  SessionStore
 	dummyHash string // hash bcrypt factice, égaliseur de timing au login
+	onError   ErrorHandler
+}
+
+// ManagerOption configure le Manager.
+type ManagerOption func(*Manager)
+
+// WithManagerErrorHandler remplace la réponse des erreurs produites par le
+// Manager, aujourd'hui le refus de RequireAuth faute du rôle exigé (403,
+// CodeForbidden) : le projet rend ainsi une page traduite à son format. Un
+// handler nil est ignoré.
+func WithManagerErrorHandler(h ErrorHandler) ManagerOption {
+	return func(m *Manager) {
+		if h != nil {
+			m.onError = h
+		}
+	}
 }
 
 // New construit un Manager à partir d'un fragment appconf.Auth et des stores du
 // projet. Les valeurs nulles de cfg retombent sur des défauts sûrs.
-func New(cfg appconf.Auth, users UserStore, sessions SessionStore) *Manager {
+func New(cfg appconf.Auth, users UserStore, sessions SessionStore, opts ...ManagerOption) *Manager {
 	if cfg.SessionTTL <= 0 {
 		cfg.SessionTTL = defaultSessionTTL
 	}
@@ -44,10 +60,15 @@ func New(cfg appconf.Auth, users UserStore, sessions SessionStore) *Manager {
 	if cfg.CookieSecure == "" {
 		cfg.CookieSecure = "auto"
 	}
-	return &Manager{
+	m := &Manager{
 		cfg: cfg, users: users, sessions: sessions,
 		dummyHash: newDummyHash(cfg.BcryptCost),
+		onError:   defaultErrorHandler,
 	}
+	for _, o := range opts {
+		o(m)
+	}
+	return m
 }
 
 // Users expose le UserStore sous-jacent (pratique pour les composants qui
@@ -111,7 +132,8 @@ func (m *Manager) LoadSession(next http.Handler) http.Handler {
 }
 
 // RequireAuth redirige vers /login si la requête n'est pas authentifiée. Si des
-// rôles sont fournis, l'utilisateur doit en posséder un (sinon 403). Une session
+// rôles sont fournis, l'utilisateur doit en posséder un (sinon 403, rendu par
+// l'ErrorHandler du Manager avec CodeForbidden). Une session
 // de purpose=setup est rejetée ici : seul le projet décide quelles routes de
 // configuration l'acceptent (en n'y plaçant pas RequireAuth, ou via SetupOnly).
 func (m *Manager) RequireAuth(roles ...Role) func(http.Handler) http.Handler {
@@ -127,7 +149,7 @@ func (m *Manager) RequireAuth(roles ...Role) func(http.Handler) http.Handler {
 				return
 			}
 			if len(roles) > 0 && !hasRole(user.Role, roles) {
-				http.Error(w, "Accès interdit", http.StatusForbidden)
+				m.onError(w, r, http.StatusForbidden, CodeForbidden, nil)
 				return
 			}
 			next.ServeHTTP(w, r)
