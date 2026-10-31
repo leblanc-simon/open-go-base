@@ -10,7 +10,9 @@
 // d'authx (qui restent la première barrière). Le jeton étant porté par un cookie
 // non signé, le modèle suppose qu'un attaquant ne peut pas écrire ce cookie sur
 // le domaine : éviter de partager un domaine parent avec des sous-domaines non
-// fiables.
+// fiables, ou lier le jeton à la session (WithSessionBinding : le jeton présenté
+// est alors un HMAC du cookie et du secret de session, que l'attaquant ne peut pas
+// calculer).
 //
 // Intégration côté projet :
 //

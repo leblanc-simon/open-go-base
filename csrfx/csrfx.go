@@ -2,7 +2,9 @@ package csrfx
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"html"
@@ -36,6 +38,7 @@ type Protector struct {
 	headerName string
 	secure     string // "auto" | "on" | "off"
 	onFailure  http.Handler
+	session    func(*http.Request) string
 }
 
 // Option configure le Protector.
@@ -92,6 +95,22 @@ func WithFailureHandler(h http.Handler) Option {
 	}
 }
 
+// WithSessionBinding lie le jeton à la session : le jeton attendu dans le champ ou
+// l'en-tête devient HMAC-SHA256(clé = valeur du cookie, message = session(r)), et non
+// plus la valeur du cookie elle-même. Un attaquant qui sait écrire le cookie (depuis un
+// sous-domaine, ou par une réponse HTTP en clair) ne peut plus forger un couple
+// cookie-champ valable : il lui faudrait le secret de session de la victime. session
+// renvoie un secret propre à la session de la requête (son jeton), ou "" sans session.
+// Une session qui change (connexion, déconnexion) change le jeton attendu : un
+// formulaire affiché avant est alors refusé. Une fonction nil est ignorée.
+func WithSessionBinding(session func(*http.Request) string) Option {
+	return func(p *Protector) {
+		if session != nil {
+			p.session = session
+		}
+	}
+}
+
 // New construit un Protector. Sans option, valeurs par défaut sûres.
 func New(opts ...Option) *Protector {
 	p := &Protector{
@@ -122,9 +141,10 @@ func (p *Protector) Middleware(next http.Handler) http.Handler {
 			}
 			p.setCookie(w, r, token)
 		}
-		r = r.WithContext(context.WithValue(r.Context(), ctxKeyToken, token))
+		expected := p.expectedToken(r, token)
+		r = r.WithContext(context.WithValue(r.Context(), ctxKeyToken, expected))
 
-		if isMutating(r.Method) && !p.validToken(r, token) {
+		if isMutating(r.Method) && !p.validToken(r, expected) {
 			p.onFailure.ServeHTTP(w, r)
 			return
 		}
@@ -163,8 +183,20 @@ func (p *Protector) cookieToken(r *http.Request) string {
 	return c.Value
 }
 
-func (p *Protector) validToken(r *http.Request, cookieToken string) bool {
-	if cookieToken == "" {
+// expectedToken renvoie le jeton à présenter : la valeur du cookie, ou son HMAC lié à
+// la session (WithSessionBinding).
+func (p *Protector) expectedToken(r *http.Request, cookieToken string) string {
+	if p.session == nil {
+		return cookieToken
+	}
+	mac := hmac.New(sha256.New, []byte(cookieToken))
+	mac.Write([]byte("csrfx-session\x00"))
+	mac.Write([]byte(p.session(r)))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func (p *Protector) validToken(r *http.Request, expected string) bool {
+	if expected == "" {
 		return false
 	}
 	sent := r.Header.Get(p.headerName)
@@ -174,7 +206,7 @@ func (p *Protector) validToken(r *http.Request, cookieToken string) bool {
 	if sent == "" {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(sent), []byte(cookieToken)) == 1
+	return subtle.ConstantTimeCompare([]byte(sent), []byte(expected)) == 1
 }
 
 func (p *Protector) setCookie(w http.ResponseWriter, r *http.Request, token string) {
