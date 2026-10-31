@@ -28,7 +28,7 @@ constructeurs prennent le dialecte. Migrations en sous-dossiers `migrations/<dia
 placeholders adaptés via `internal/sqldialect.Rebind` (`?`→`$n` en PG) ; `Create` utilise
 `RETURNING` en PG (pas de `LastInsertId`). Booléens stockés en SMALLINT 0/1 partout pour un scan
 Go uniforme. Tests réels en SQLite (modernc) ; en PostgreSQL 16, migrations et stores ont été
-exécutés pour la première fois par open-go-sbom (sonde et tests d'intégration de son lot T03,
+exécutés pour la première fois par lotor (ex-open-go-sbom) (sonde et tests d'intégration de son lot T03,
 31 octobre 2026) sans défaut constaté ; pas de test PG ici (il faudrait un pilote en
 dépendance de test). Ajouter MySQL = `migrations/mysql/` + branche upsert
 `ON DUPLICATE KEY` + `supported()`.
@@ -38,7 +38,7 @@ Erreurs présentées à l'utilisateur sous forme de **codes stables** (`authx.Er
 défaut) ; erreurs 400/403/500 rendues par un `ErrorHandler` configurable qui ne renvoie jamais la
 cause au client ; `csrfx.WithFailureHandler` pour la réponse 403 (v1.1.0).
 
-Sécurité (v1.3.0, demandé par la revue de sécurité d'open-go-sbom) : verrouillage par compte
+Sécurité (v1.3.0, demandé par la revue de sécurité d'lotor (ex-open-go-sbom)) : verrouillage par compte
 dans mfax (`WithLockout`, `LockoutStore`, table `mfa_lockouts`, `Confirm` pour la
 réauthentification, `CodeLocked`), nom du cookie de défi configurable
 (`WithChallengeCookieName`, préfixe `__Host-`), jeton CSRF lié à la session
