@@ -40,7 +40,8 @@
 // défi s'obtient en rejouant le mot de passe : le plafond par défi ne borne donc
 // pas une force brute). Au seuil, le compte est verrouillé pour une durée qui
 // double à chaque récidive ; Confirm offre la même vérification hors connexion
-// (réauthentification avant une action sensible).
+// (réauthentification avant une action sensible), et EnablePOST l'applique au code qui
+// confirme l'enrôlement (il ne fait rien sur un TOTP déjà actif).
 //
 // # Codes de secours
 //
