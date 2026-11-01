@@ -1,6 +1,6 @@
 // Package sqlstore fournit une implémentation database/sql des stores de mfax
-// (TOTPStore, ChallengeStore, LockoutStore) et les migrations du schéma associé
-// (tables dédiées mfa_totp, mfa_challenges et mfa_lockouts).
+// (TOTPStore, ChallengeStore, LockoutStore, RecoveryStore) et les migrations du schéma
+// associé (tables dédiées mfa_totp, mfa_challenges, mfa_lockouts et mfa_recovery_codes).
 //
 // Plusieurs dialectes sont gérés (SQLite, PostgreSQL) ; le dialecte est passé à
 // Migrate et aux constructeurs via appconf.Dialect (typiquement
@@ -186,6 +186,7 @@ var (
 	_ mfax.TOTPStore      = (*TOTPStore)(nil)
 	_ mfax.ChallengeStore = (*ChallengeStore)(nil)
 	_ mfax.LockoutStore   = (*LockoutStore)(nil)
+	_ mfax.RecoveryStore  = (*RecoveryStore)(nil)
 )
 
 // LockoutStore implémente mfax.LockoutStore sur une base SQL (table mfa_lockouts).
@@ -255,5 +256,70 @@ func (s *LockoutStore) Fail(userID int64, now time.Time, p mfax.LockoutPolicy) (
 // Reset efface les échecs et le palier de verrouillage de l'utilisateur.
 func (s *LockoutStore) Reset(userID int64) error {
 	_, err := s.db.Exec(s.rb(`DELETE FROM mfa_lockouts WHERE user_id = ?`), userID)
+	return err
+}
+
+// RecoveryStore implémente mfax.RecoveryStore sur une base SQL (table
+// mfa_recovery_codes, empreintes seulement).
+type RecoveryStore struct {
+	db      *sql.DB
+	dialect appconf.Dialect
+}
+
+// NewRecoveryStore construit un RecoveryStore sur db pour le dialecte d.
+func NewRecoveryStore(db *sql.DB, d appconf.Dialect) *RecoveryStore {
+	return &RecoveryStore{db: db, dialect: d}
+}
+
+func (s *RecoveryStore) rb(q string) string { return sqldialect.Rebind(s.dialect, q) }
+
+// Replace remplace tous les codes de l'utilisateur dans une seule transaction : un
+// échec laisse l'ancien jeu intact, jamais un jeu partiel.
+func (s *RecoveryStore) Replace(userID int64, hashes []string) (err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err = tx.Exec(s.rb(`DELETE FROM mfa_recovery_codes WHERE user_id = ?`), userID); err != nil {
+		return err
+	}
+	for _, h := range hashes {
+		if _, err = tx.Exec(s.rb(`INSERT INTO mfa_recovery_codes (user_id, code_hash) VALUES (?, ?)`), userID, h); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// Use consomme un code : la condition used_at = 0 de l'UPDATE rend l'opération
+// atomique, deux requêtes concurrentes ne consomment pas le même code.
+func (s *RecoveryStore) Use(userID int64, hash string, now time.Time) (bool, error) {
+	res, err := s.db.Exec(s.rb(`UPDATE mfa_recovery_codes SET used_at = ?
+		 WHERE user_id = ? AND code_hash = ? AND used_at = 0`), max(now.Unix(), 1), userID, hash)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// Remaining renvoie le nombre de codes non utilisés de l'utilisateur.
+func (s *RecoveryStore) Remaining(userID int64) (int, error) {
+	var n int
+	err := s.db.QueryRow(s.rb(`SELECT COUNT(*) FROM mfa_recovery_codes WHERE user_id = ? AND used_at = 0`), userID).Scan(&n)
+	return n, err
+}
+
+// Delete supprime tous les codes de l'utilisateur.
+func (s *RecoveryStore) Delete(userID int64) error {
+	_, err := s.db.Exec(s.rb(`DELETE FROM mfa_recovery_codes WHERE user_id = ?`), userID)
 	return err
 }

@@ -75,6 +75,8 @@ type MFA struct {
 	LockoutWindow      time.Duration `yaml:"lockout_window"       env:"MFA_LOCKOUT_WINDOW"       env-default:"15m" env-description:"Window in which wrong codes are counted"`
 	LockoutDuration    time.Duration `yaml:"lockout_duration"     env:"MFA_LOCKOUT_DURATION"     env-default:"15m" env-description:"First lockout duration, doubled at each new lockout"`
 	LockoutMaxDuration time.Duration `yaml:"lockout_max_duration" env:"MFA_LOCKOUT_MAX_DURATION" env-default:"24h" env-description:"Maximum lockout duration"`
+	// Codes de secours (mfax.WithRecoveryCodes) : nombre de codes d'un jeu.
+	RecoveryCodes int `yaml:"recovery_codes" env:"MFA_RECOVERY_CODES" env-default:"10" env-description:"Number of one-time recovery codes in a set (mfax.WithRecoveryCodes, at most 50)"`
 }
 
 // Dialect identifie le moteur SQL ciblé. Il sélectionne le jeu de migrations et

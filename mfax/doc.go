@@ -41,4 +41,17 @@
 // pas une force brute). Au seuil, le compte est verrouillé pour une durée qui
 // double à chaque récidive ; Confirm offre la même vérification hors connexion
 // (réauthentification avant une action sensible).
+//
+// # Codes de secours
+//
+// WithRecoveryCodes ajoute des codes de secours à usage unique : un jeu de
+// appconf.MFA.RecoveryCodes codes (10 par défaut) de 80 bits d'aléa, dont seules les
+// empreintes SHA-256 sont gardées (RecoveryStore, table mfa_recovery_codes). EnablePOST
+// les génère à l'enrôlement et les montre une seule fois (RecoveryRenderer) ;
+// RegenerateRecoveryPOST, ou GenerateRecoveryCodes après une réauthentification, en tire
+// un nouveau jeu qui invalide l'ancien. À la connexion, VerifyPOST accepte un code de
+// secours dans le champ recovery_code ; un code faux compte dans le plafond du défi et
+// dans le verrouillage par compte, comme un code TOTP faux. ConfirmRecovery réauthentifie
+// par un code de secours (DisablePOST l'accepte, pour reconfigurer une application
+// perdue). WithRecoveryHook signale chaque code consommé et le nombre restant.
 package mfax

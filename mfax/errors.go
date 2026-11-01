@@ -11,6 +11,9 @@ const (
 	// aussi la valeur du paramètre ?error= des redirections d'EnablePOST et de
 	// DisablePOST.
 	CodeInvalidCode ErrorCode = "invalid_code"
+	// CodeInvalidRecoveryCode : code de secours refusé (faux, déjà utilisé, ou d'un
+	// ancien jeu) à la connexion (WithRecoveryCodes).
+	CodeInvalidRecoveryCode ErrorCode = "invalid_recovery_code"
 	// CodeAttemptsExhausted : plafond de tentatives atteint, le challenge est
 	// abandonné. C'est la valeur du paramètre ?err= de la redirection vers
 	// /login.
@@ -35,11 +38,12 @@ const lockedPath = "/login?err=" + string(CodeLocked)
 const ChallengeCookieName = challengeCookieName
 
 var defaultMessages = map[ErrorCode]string{
-	CodeInvalidCode:       "Code invalide",
-	CodeAttemptsExhausted: "Trop de tentatives",
-	CodeLocked:            "Trop de codes refusés : réessayez plus tard",
-	CodeInvalidForm:       "invalid form",
-	CodeInternal:          "Erreur interne",
+	CodeInvalidCode:         "Code invalide",
+	CodeInvalidRecoveryCode: "Code de secours invalide",
+	CodeAttemptsExhausted:   "Trop de tentatives",
+	CodeLocked:              "Trop de codes refusés : réessayez plus tard",
+	CodeInvalidForm:         "invalid form",
+	CodeInternal:            "Erreur interne",
 }
 
 // DefaultMessage renvoie le texte français par défaut d'un code (vide si le code

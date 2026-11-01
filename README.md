@@ -572,8 +572,8 @@ r.Group(func(r chi.Router) {
 })
 ```
 
-Configuration via le fragment `appconf.MFA` (`issuer`, `challenge_ttl`, `max_attempts`, et
-`lockout_*` pour le verrouillage par compte).
+Configuration via le fragment `appconf.MFA` (`issuer`, `challenge_ttl`, `max_attempts`,
+`lockout_*` pour le verrouillage par compte, `recovery_codes` pour les codes de secours).
 `WithOptionalEnrollment()` rend la 2FA facultative (login direct si non configurée). Le QR
 s'obtient via `mfax.QRDataURI(provisioningURL)` (à typer en `template.URL` côté template).
 
@@ -597,6 +597,41 @@ renvoie vers `/login?err=2fa_locked` (`CodeLocked`), `VerifyPOST` abandonne le d
 examiner le code. `WithLockoutHook` est appelé à chaque verrouillage (journal d'audit, alerte).
 `Confirm(r, user, code)` vérifie un code hors connexion (réauthentification avant une action
 sensible) avec anti-rejeu et verrouillage (`ErrLocked`) ; `DisablePOST` s'en sert.
+
+**Codes de secours** (`WithRecoveryCodes(mfasql.NewRecoveryStore(db, d))`, migration `004`,
+v1.4.0) : codes à usage unique, hachés, régénérables, pour se connecter sans l'application
+TOTP. Un jeu compte `recovery_codes` codes (10 par défaut, 50 au plus) de 16 caractères de
+l'alphabet de Crockford (80 bits), affichés `xxxx-xxxx-xxxx-xxxx` ; la saisie tolère
+majuscules, espaces, absence de tirets et les confusions `o`/`0`, `i`/`l`/`1`. Seule
+l'empreinte SHA-256 (liée au compte) est gardée, dans `mfa_recovery_codes`.
+
+```go
+svc := mfax.New(cfg.MFA, mgr, totpStore, challengeStore,
+	mfax.WithRenderer(rend), // doit aussi implémenter mfax.RecoveryRenderer
+	mfax.WithLockout(mfasql.NewLockoutStore(db, d)),
+	mfax.WithRecoveryCodes(mfasql.NewRecoveryStore(db, d)),
+	mfax.WithRecoveryHook(func(r *http.Request, u *authx.User, remaining int) { /* audit */ }),
+	mfax.WithRecoveryLanding("/profile/security"), // facultatif
+)
+r.With(mgr.RequireAuth()).Post("/profile/recovery-codes", svc.RegenerateRecoveryPOST)
+```
+
+- **Enrôlement** : `EnablePOST` génère un jeu et le montre aussitôt par
+  `RecoveryRenderer.RenderRecoveryCodes` (`RecoveryCodesView{Codes, Next, Enrollment}`, réponse
+  `Cache-Control: no-store`) au lieu de rediriger.
+- **Connexion** : `VerifyView.Recovery` signale que la page doit proposer un champ
+  `recovery_code` ; `VerifyPOST` l'examine en priorité s'il est rempli. Un code faux rend
+  `CodeInvalidRecoveryCode` et compte dans le plafond du défi et dans le verrouillage par
+  compte ; un compte verrouillé refuse aussi les codes de secours.
+- **Régénération** : `RegenerateRecoveryPOST` (code TOTP exigé, comme `DisablePOST`) ou
+  `GenerateRecoveryCodes(userID)` après sa propre réauthentification ; le nouveau jeu
+  invalide l'ancien. `RecoveryRemaining(userID)` compte les codes restants.
+- **Application perdue** : `ConfirmRecovery(r, user, code)` réauthentifie par un code de
+  secours ; `DisablePOST` l'accepte (champ `recovery_code`, `code` vide), ce qui permet de
+  reconfigurer le TOTP. Les codes sont supprimés avec le secret.
+
+Sans `WithRecoveryCodes`, rien ne change (champ `recovery_code` ignoré, méthodes en
+`ErrRecoveryDisabled`).
 
 > **Sécurité.** Compteur de tentatives **atomique** (pas de contournement de `max_attempts` par
 > requêtes concurrentes). **Anti-rejeu** : un code TOTP n'est accepté qu'une fois (suivi du

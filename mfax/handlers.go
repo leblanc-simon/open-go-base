@@ -20,6 +20,9 @@ type Renderer interface {
 // VerifyView porte les données de la page de vérification.
 type VerifyView struct {
 	Next string
+	// Recovery indique que les codes de secours sont acceptés (WithRecoveryCodes) : la page
+	// propose alors un second champ, recovery_code.
+	Recovery bool
 	// Code est la nature de l'erreur (vide = formulaire vierge), à traduire.
 	Code ErrorCode
 	// Error est le texte français par défaut de Code (DefaultMessage).
@@ -51,11 +54,13 @@ func (s *Service) VerifyGET(w http.ResponseWriter, r *http.Request) {
 		s.onError(w, r, http.StatusInternalServerError, CodeInternal, errNoRenderer)
 		return
 	}
-	s.renderer.RenderVerify(w, r, VerifyView{Next: r.URL.Query().Get("next")})
+	s.renderer.RenderVerify(w, r, VerifyView{Next: r.URL.Query().Get("next"), Recovery: s.recovery != nil})
 }
 
-// VerifyPOST vérifie le code TOTP soumis. En cas de succès, supprime le
-// challenge et ouvre une session pleinement authentifiée.
+// VerifyPOST vérifie le code TOTP soumis (champ "code") ou, avec WithRecoveryCodes, un
+// code de secours (champ "recovery_code", prioritaire s'il est rempli). Les deux
+// partagent le plafond de tentatives du défi et le verrouillage par compte. En cas de
+// succès, supprime le challenge et ouvre une session pleinement authentifiée.
 func (s *Service) VerifyPOST(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		s.onError(w, r, http.StatusBadRequest, CodeInvalidForm, err)
@@ -67,6 +72,8 @@ func (s *Service) VerifyPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := strings.TrimSpace(r.PostForm.Get("code"))
+	recoveryCode := strings.TrimSpace(r.PostForm.Get("recovery_code"))
+	useRecovery := s.recovery != nil && recoveryCode != ""
 	next := r.PostForm.Get("next")
 
 	// Un compte verrouillé n'examine aucun code : le défi est abandonné.
@@ -91,7 +98,12 @@ func (s *Service) VerifyPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	valid, err := s.consumeCode(user.ID, code)
+	var valid bool
+	if useRecovery {
+		valid, err = s.useRecoveryCode(r, user, recoveryCode)
+	} else {
+		valid, err = s.consumeCode(user.ID, code)
+	}
 	if err != nil {
 		s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return
@@ -110,8 +122,12 @@ func (s *Service) VerifyPOST(w http.ResponseWriter, r *http.Request) {
 			s.onError(w, r, http.StatusInternalServerError, CodeInternal, errNoRenderer)
 			return
 		}
+		failure := CodeInvalidCode
+		if useRecovery {
+			failure = CodeInvalidRecoveryCode
+		}
 		w.WriteHeader(http.StatusUnauthorized)
-		s.renderer.RenderVerify(w, r, VerifyView{Next: next, Code: CodeInvalidCode, Error: DefaultMessage(CodeInvalidCode)})
+		s.renderer.RenderVerify(w, r, VerifyView{Next: next, Recovery: s.recovery != nil, Code: failure, Error: DefaultMessage(failure)})
 		return
 	}
 
@@ -127,7 +143,11 @@ func (s *Service) VerifyPOST(w http.ResponseWriter, r *http.Request) {
 		s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return
 	}
-	http.Redirect(w, r, authx.SafeRedirectPath(next, s.homePath), http.StatusSeeOther)
+	target := authx.SafeRedirectPath(next, s.homePath)
+	if useRecovery && s.recoveryLanding != "" {
+		target = s.recoveryLanding
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
 // dropChallenge abandonne le défi en cours et renvoie vers target.
@@ -176,7 +196,8 @@ func (s *Service) SetupGET(w http.ResponseWriter, r *http.Request) {
 
 // EnablePOST confirme l'activation du TOTP avec un premier code valide. Depuis
 // une session de setup (premier login), il élève la session en session
-// authentifiée et renvoie vers l'accueil.
+// authentifiée et renvoie vers l'accueil. Avec WithRecoveryCodes, il génère un jeu de
+// codes de secours et les montre aussitôt (RecoveryRenderer) au lieu de rediriger.
 func (s *Service) EnablePOST(w http.ResponseWriter, r *http.Request) {
 	user := authx.UserFrom(r)
 	if user == nil {
@@ -214,6 +235,10 @@ func (s *Service) EnablePOST(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if s.recovery != nil {
+		s.renderRecoveryCodes(w, r, user, true)
+		return
+	}
 	http.Redirect(w, r, s.homePath, http.StatusSeeOther)
 }
 
@@ -224,7 +249,10 @@ func (s *Service) EnablePOST(w http.ResponseWriter, r *http.Request) {
 // (Confirm : anti-rejeu et verrouillage par compte). Sans cette
 // ré-authentification, une session compromise (ou une CSRF qui passerait la
 // barrière SameSite) pourrait retirer le second facteur sans preuve de
-// possession. Sans 2FA active, l'opération est un no-op idempotent.
+// possession. Avec WithRecoveryCodes, un code de secours (champ "recovery_code",
+// ConfirmRecovery) vaut réauthentification quand "code" est vide : l'utilisateur qui a
+// perdu son application peut ainsi la reconfigurer. Les codes de secours sont supprimés
+// avec le secret. Sans 2FA active, l'opération est un no-op idempotent.
 func (s *Service) DisablePOST(w http.ResponseWriter, r *http.Request) {
 	user := authx.UserFrom(r)
 	if user == nil {
@@ -246,7 +274,12 @@ func (s *Service) DisablePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := strings.TrimSpace(r.PostForm.Get("code"))
-	valid, err := s.Confirm(r, user, code)
+	var valid bool
+	if rc := strings.TrimSpace(r.PostForm.Get("recovery_code")); code == "" && rc != "" && s.recovery != nil {
+		valid, err = s.ConfirmRecovery(r, user, rc)
+	} else {
+		valid, err = s.Confirm(r, user, code)
+	}
 	if errors.Is(err, ErrLocked) {
 		http.Redirect(w, r, s.homePath+"?error="+string(CodeLocked), http.StatusSeeOther)
 		return
@@ -262,6 +295,12 @@ func (s *Service) DisablePOST(w http.ResponseWriter, r *http.Request) {
 	if err := s.totp.Delete(user.ID); err != nil {
 		s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return
+	}
+	if s.recovery != nil {
+		if err := s.recovery.Delete(user.ID); err != nil {
+			s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
+			return
+		}
 	}
 	http.Redirect(w, r, s.homePath, http.StatusSeeOther)
 }

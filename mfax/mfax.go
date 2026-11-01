@@ -39,6 +39,11 @@ type Service struct {
 	policy    LockoutPolicy
 	cookie    string
 
+	recovery        RecoveryStore
+	onRecovery      RecoveryHook
+	recoveryLanding string
+	recoveryCount   int
+
 	verifyPath string
 	setupPath  string
 	homePath   string
@@ -101,8 +106,9 @@ func New(cfg appconf.MFA, mgr *authx.Manager, totpStore TOTPStore, chs Challenge
 	s := &Service{
 		cfg: cfg, mgr: mgr, totp: totpStore, chs: chs, enrollReq: true, onError: defaultErrorHandler,
 		verifyPath: "/login/2fa", setupPath: "/profile/totp/setup", homePath: "/",
-		policy: lockoutPolicy(cfg.LockoutThreshold, cfg.LockoutWindow, cfg.LockoutDuration, cfg.LockoutMaxDuration),
-		cookie: challengeCookieName,
+		policy:        lockoutPolicy(cfg.LockoutThreshold, cfg.LockoutWindow, cfg.LockoutDuration, cfg.LockoutMaxDuration),
+		cookie:        challengeCookieName,
+		recoveryCount: recoveryCount(cfg.RecoveryCodes),
 	}
 	for _, o := range opts {
 		o(s)
