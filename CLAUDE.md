@@ -44,6 +44,14 @@ réauthentification, `CodeLocked`), nom du cookie de défi configurable
 (`WithChallengeCookieName`, préfixe `__Host-`), jeton CSRF lié à la session
 (`csrfx.WithSessionBinding`). Tout est optionnel : sans ces options, comportement inchangé.
 
+Codes de secours TOTP (v1.4.0, demandé par la recette du lot 2 de lotor) :
+`mfax.WithRecoveryCodes(RecoveryStore)`, table `mfa_recovery_codes` (migration 004),
+codes de 80 bits hachés en SHA-256 liés au compte, montrés à l'enrôlement
+(`RecoveryRenderer`, interface facultative pour ne pas casser `Renderer`), champ
+`recovery_code` de `VerifyPOST`, `RegenerateRecoveryPOST`, `ConfirmRecovery`,
+`WithRecoveryHook`, `WithRecoveryLanding`, `appconf.MFA.RecoveryCodes`. Les codes faux
+nourrissent le verrouillage par compte. Sans l'option, comportement inchangé.
+
 `specs/00-initial.md` est le brief de référence ; il fait foi sur l'architecture, l'API et
 l'ordre d'implémentation. Le lire avant toute tâche. La doc d'utilisation des composants
 (API + exemples) est dans `README.md`.

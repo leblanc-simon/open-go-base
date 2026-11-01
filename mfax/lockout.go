@@ -82,12 +82,18 @@ func (s *Service) LockedUntil(userID int64) (time.Time, error) {
 // le verrouillage par compte : un compte verrouillé reçoit ErrLocked sans que le code
 // soit examiné, un code faux compte comme un échec, un code juste efface le compteur.
 func (s *Service) Confirm(r *http.Request, user *authx.User, code string) (bool, error) {
+	return s.confirm(r, user, func() (bool, error) { return s.consumeCode(user.ID, code) })
+}
+
+// confirm applique le verrouillage par compte autour de check, qui vérifie et consomme un
+// code (TOTP ou de secours).
+func (s *Service) confirm(r *http.Request, user *authx.User, check func() (bool, error)) (bool, error) {
 	if until, err := s.LockedUntil(user.ID); err != nil {
 		return false, err
 	} else if !until.IsZero() {
 		return false, ErrLocked
 	}
-	valid, err := s.consumeCode(user.ID, code)
+	valid, err := check()
 	if err != nil {
 		return false, err
 	}

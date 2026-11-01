@@ -180,3 +180,61 @@ func TestLockoutStore(t *testing.T) {
 		t.Fatalf("après Reset : %v", got)
 	}
 }
+
+func TestRecoveryStore(t *testing.T) {
+	db := openDB(t)
+	store := sqlstore.NewRecoveryStore(db, appconf.DialectSQLite)
+	now := time.Now()
+
+	if n, err := store.Remaining(5); n != 0 || err != nil {
+		t.Fatalf("restants sans codes : %d %v", n, err)
+	}
+	if err := store.Replace(5, []string{"h1", "h2", "h3"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Replace(6, []string{"h1"}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.Use(5, "h2", now); !ok || err != nil {
+		t.Fatalf("use h2 : %v %v", ok, err)
+	}
+	if ok, _ := store.Use(5, "h2", now); ok {
+		t.Error("h2 consommé deux fois")
+	}
+	if ok, _ := store.Use(5, "inconnu", now); ok {
+		t.Error("empreinte inconnue acceptée")
+	}
+	if n, _ := store.Remaining(5); n != 2 {
+		t.Errorf("restants : %d, attendu 2", n)
+	}
+	// Un code d'un autre compte ne compte pas pour celui-ci.
+	if n, _ := store.Remaining(6); n != 1 {
+		t.Errorf("restants du compte 6 : %d", n)
+	}
+	// Replace remplace tout, codes utilisés compris.
+	if err := store.Replace(5, []string{"h4"}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := store.Use(5, "h1", now); ok {
+		t.Error("ancien code valable après Replace")
+	}
+	if n, _ := store.Remaining(5); n != 1 {
+		t.Errorf("restants après Replace : %d", n)
+	}
+	// Un Replace en échec (doublon) laisse l'ancien jeu intact.
+	if err := store.Replace(5, []string{"h7", "h7"}); err == nil {
+		t.Fatal("doublon accepté")
+	}
+	if ok, _ := store.Use(5, "h4", now); !ok {
+		t.Error("ancien jeu perdu après un Replace en échec")
+	}
+	if err := store.Delete(5); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := store.Remaining(5); n != 0 {
+		t.Errorf("restants après Delete : %d", n)
+	}
+	if n, _ := store.Remaining(6); n != 1 {
+		t.Errorf("Delete a touché un autre compte : %d", n)
+	}
+}
