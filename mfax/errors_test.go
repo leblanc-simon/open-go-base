@@ -105,6 +105,7 @@ func TestSetupNeverReflectsArbitraryErrorText(t *testing.T) {
 
 	for query, want := range map[string]mfax.ErrorCode{
 		"?error=invalid_code":              mfax.CodeInvalidCode,
+		"?error=2fa_locked":                mfax.CodeLocked,
 		"?error=Votre+compte+est+suspendu": "",
 		"":                                 "",
 	} {

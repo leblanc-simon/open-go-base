@@ -52,6 +52,12 @@ codes de 80 bits hachés en SHA-256 liés au compte, montrés à l'enrôlement
 `WithRecoveryHook`, `WithRecoveryLanding`, `appconf.MFA.RecoveryCodes`. Les codes faux
 nourrissent le verrouillage par compte. Sans l'option, comportement inchangé.
 
+Correctif v1.4.1 (revue de sécurité du lot 2 de lotor, SEC2-01) : `EnablePOST` refuse
+un TOTP déjà actif (redirection vers l'accueil sans examiner le code, comme `SetupGET`) et
+passe par le verrouillage par compte (code faux compté, compte verrouillé →
+`setup?error=2fa_locked`). **Ne pas régresser** : aucun chemin ne doit délivrer de codes de
+secours sans un code compté dans le verrouillage.
+
 `specs/00-initial.md` est le brief de référence ; il fait foi sur l'architecture, l'API et
 l'ordre d'implémentation. Le lire avant toute tâche. La doc d'utilisation des composants
 (API + exemples) est dans `README.md`.

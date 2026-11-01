@@ -20,7 +20,8 @@ const (
 	CodeAttemptsExhausted ErrorCode = "2fa_exhausted"
 	// CodeLocked : compte verrouillé après trop de codes faux (WithLockout). C'est
 	// la valeur du paramètre ?err= de la redirection vers /login, et du paramètre
-	// ?error= de la redirection de DisablePOST.
+	// ?error= des redirections de DisablePOST, RegenerateRecoveryPOST et EnablePOST
+	// (vers la page de configuration, où SetupView.Code le reprend).
 	CodeLocked ErrorCode = "2fa_locked"
 	// CodeInvalidForm : corps de formulaire illisible (400).
 	CodeInvalidForm ErrorCode = "invalid_form"
@@ -78,7 +79,7 @@ func defaultErrorHandler(w http.ResponseWriter, _ *http.Request, status int, cod
 // n'est jamais réaffiché tel quel (sinon un lien forgé ferait afficher un texte
 // arbitraire sur la page).
 func codeFromQuery(v string) ErrorCode {
-	if c := ErrorCode(v); c == CodeInvalidCode {
+	if c := ErrorCode(v); c == CodeInvalidCode || c == CodeLocked {
 		return c
 	}
 	return ""

@@ -596,7 +596,8 @@ passe. Le verrouillage compte les codes faux **par compte**, tous défis confond
 renvoie vers `/login?err=2fa_locked` (`CodeLocked`), `VerifyPOST` abandonne le défi sans
 examiner le code. `WithLockoutHook` est appelé à chaque verrouillage (journal d'audit, alerte).
 `Confirm(r, user, code)` vérifie un code hors connexion (réauthentification avant une action
-sensible) avec anti-rejeu et verrouillage (`ErrLocked`) ; `DisablePOST` s'en sert.
+sensible) avec anti-rejeu et verrouillage (`ErrLocked`) ; `DisablePOST` s'en sert, et
+`EnablePOST` applique le même verrouillage au code de confirmation de l'enrôlement (v1.4.1).
 
 **Codes de secours** (`WithRecoveryCodes(mfasql.NewRecoveryStore(db, d))`, migration `004`,
 v1.4.0) : codes à usage unique, hachés, régénérables, pour se connecter sans l'application
@@ -618,7 +619,10 @@ r.With(mgr.RequireAuth()).Post("/profile/recovery-codes", svc.RegenerateRecovery
 
 - **Enrôlement** : `EnablePOST` génère un jeu et le montre aussitôt par
   `RecoveryRenderer.RenderRecoveryCodes` (`RecoveryCodesView{Codes, Next, Enrollment}`, réponse
-  `Cache-Control: no-store`) au lieu de rediriger.
+  `Cache-Control: no-store`) au lieu de rediriger. Depuis la v1.4.1, `EnablePOST` ne fait rien
+  sur un TOTP déjà actif (redirection vers l'accueil, code non examiné) et chaque code faux
+  compte dans le verrouillage par compte (compte verrouillé : `setup?error=2fa_locked`) :
+  aucun jeu n'est délivré sans un code compté dans le verrouillage.
 - **Connexion** : `VerifyView.Recovery` signale que la page doit proposer un champ
   `recovery_code` ; `VerifyPOST` l'examine en priorité s'il est rempli. Un code faux rend
   `CodeInvalidRecoveryCode` et compte dans le plafond du défi et dans le verrouillage par

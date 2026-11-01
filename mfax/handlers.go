@@ -198,6 +198,13 @@ func (s *Service) SetupGET(w http.ResponseWriter, r *http.Request) {
 // une session de setup (premier login), il élève la session en session
 // authentifiée et renvoie vers l'accueil. Avec WithRecoveryCodes, il génère un jeu de
 // codes de secours et les montre aussitôt (RecoveryRenderer) au lieu de rediriger.
+//
+// Un TOTP déjà actif ne se « réactive » pas : comme SetupGET, EnablePOST renvoie alors
+// vers l'accueil sans examiner le code. Sans cette règle, une session volée pourrait
+// deviner un code par force brute et recevoir un nouveau jeu de codes de secours. Le code
+// passe par le verrouillage par compte (WithLockout) : un compte verrouillé est renvoyé
+// vers la page de configuration avec ?error=2fa_locked sans que le code soit examiné, et
+// chaque code faux compte comme un échec.
 func (s *Service) EnablePOST(w http.ResponseWriter, r *http.Request) {
 	user := authx.UserFrom(r)
 	if user == nil {
@@ -214,9 +221,17 @@ func (s *Service) EnablePOST(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.setupPath, http.StatusSeeOther)
 		return
 	}
+	if t.Enabled {
+		http.Redirect(w, r, s.homePath, http.StatusSeeOther)
+		return
+	}
 	// consumeCode confirme le code ET enregistre son pas, pour qu'il ne puisse
 	// pas être rejoué comme code de connexion juste après l'enrôlement.
-	valid, err := s.consumeCode(user.ID, code)
+	valid, err := s.confirm(r, user, func() (bool, error) { return s.consumeCode(user.ID, code) })
+	if errors.Is(err, ErrLocked) {
+		http.Redirect(w, r, s.setupPath+"?error="+string(CodeLocked), http.StatusSeeOther)
+		return
+	}
 	if err != nil {
 		s.onError(w, r, http.StatusInternalServerError, CodeInternal, err)
 		return
