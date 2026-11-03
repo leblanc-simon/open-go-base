@@ -13,6 +13,12 @@
 // erreur. --help affiche l'usage des flags puis la documentation des variables
 // d'environnement ; --version affiche "<Name> <Version>" et sort en code 0.
 //
+// Un champ non nul avant l'appel à Load garde sa valeur tant que la configuration ne la
+// change pas : c'est ainsi qu'un projet remplace le défaut d'un fragment. --help annonce
+// alors cette valeur, pour les scalaires et leurs listes, au lieu de l'étiquette
+// env-default. Ne préremplir aucun secret : il apparaîtrait en clair dans l'aide. Un défaut
+// ramené à la valeur nulle (false, 0, "") reste invisible : l'étiquette est affichée.
+//
 // # Fragments
 //
 // Web, Redis, Logging, CORS, I18n, Auth, MFA et Database sont des fragments à

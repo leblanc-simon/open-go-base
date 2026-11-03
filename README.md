@@ -137,6 +137,11 @@ func MustLoad(cfg any, opts Options)   // idem mais os.Exit(2) en cas d'erreur
   d'environnement (générée automatiquement à partir des tags).
 - Source de la config : si le fichier `-c` existe → lecture du fichier ; sinon → lecture de
   l'environnement. Dans les deux cas les valeurs par défaut (`env-default`) s'appliquent.
+- **Changer un défaut dans un projet** : préremplir le champ avant `Load`
+  (`cfg.Web.Port = 1758`). La valeur tient tant que le fichier ou l'environnement ne la
+  changent pas, et `--help` l'annonce à la place de l'étiquette `env-default` (scalaires et
+  listes ; une valeur nulle reste invisible). Ne préremplir aucun secret : il apparaîtrait
+  en clair dans l'aide.
 
 > `Load` ne fait jamais `os.Exit` sur une erreur de chargement : elle est renvoyée. Seul
 > `MustLoad` sort en code 2. Les flags terminaux `--help`/`--version` terminent en code 0.

@@ -58,6 +58,10 @@ passe par le verrouillage par compte (code faux compté, compte verrouillé →
 `setup?error=2fa_locked`). **Ne pas régresser** : aucun chemin ne doit délivrer de codes de
 secours sans un code compté dans le verrouillage.
 
+Correctif v1.4.2 (demandé par lotor) : `--help` annonce les défauts préremplis par le
+projet avant `Load` à la place de l'étiquette `env-default` (`appconf/help.go`, texte de
+`cleanenv.GetDescription` corrigé, même parcours de la structure que cleanenv).
+
 `specs/00-initial.md` est le brief de référence ; il fait foi sur l'architecture, l'API et
 l'ordre d'implémentation. Le lire avant toute tâche. La doc d'utilisation des composants
 (API + exemples) est dans `README.md`.
@@ -119,9 +123,9 @@ Choix arrêtés avec l'utilisateur — empreinte `go.mod` volontairement minimal
 
 5. **Tout repose sur `github.com/ilyakaznacheev/cleanenv`** (tags `yaml` + `env` +
    `env-default` + `env-description`). Réutiliser au maximum ses primitives :
-   `cleanenv.ReadConfig` (fichier présent), `cleanenv.ReadEnv` (sinon), et `cleanenv.FUsage`
-   pour générer l'aide `--help` (qui doit afficher l'usage standard **puis** la doc des
-   variables d'env).
+   `cleanenv.ReadConfig` (fichier présent), `cleanenv.ReadEnv` (sinon), et
+   `cleanenv.GetDescription` pour générer l'aide `--help` (qui doit afficher l'usage standard
+   **puis** la doc des variables d'env, avec les défauts préremplis par le projet).
 
 6. **Module unique, pas de modules séparés.** Un sous-package non importé ne finit pas dans
    le binaire, mais ses deps tierces apparaissent quand même dans `go.mod`/`go.sum` — c'est
@@ -132,7 +136,7 @@ Choix arrêtés avec l'utilisateur — empreinte `go.mod` volontairement minimal
 - Flagset nommé d'après `opts.Name`.
 - Flag `-c` : chemin de config (défaut `opts.DefaultCfgPath`, ou `"config.yaml"` si vide).
 - Flag `--version` : affiche `"<Name> <Version>"` puis sort en code 0.
-- `--help` : usage standard + doc des env via `cleanenv.FUsage`.
+- `--help` : usage standard + doc des env via `cleanenv.GetDescription` (`appconf/help.go`).
 - Si le fichier de config existe → `cleanenv.ReadConfig`, sinon → `cleanenv.ReadEnv`.
 
 ## Contrainte composant : `ratelimit`
