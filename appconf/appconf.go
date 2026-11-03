@@ -65,10 +65,16 @@ func load(cfg any, opts Options, args []string, stdout, stderr io.Writer) error 
 	showVersion := fs.Bool("version", false, "print version and exit")
 
 	// --help : usage standard des flags PUIS la doc des variables d'env.
-	fs.Usage = cleanenv.FUsage(fs.Output(), cfg, nil, func() {
+	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Usage of %s:\n", opts.Name)
 		fs.PrintDefaults()
-	})
+		text, err := describeEnv(cfg)
+		if err != nil {
+			return
+		}
+		fmt.Fprintln(fs.Output())
+		fmt.Fprintln(fs.Output(), text)
+	}
 
 	if err := fs.Parse(args); err != nil {
 		return err // y compris flag.ErrHelp
