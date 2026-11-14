@@ -9,7 +9,8 @@
 //
 // Load remplit une struct de configuration depuis le fichier pointé par le flag
 // -c s'il existe, sinon depuis l'environnement, en appliquant les valeurs par
-// défaut (tag env-default). MustLoad fait de même mais termine en code 2 sur
+// défaut (tag env-default). Un fichier présent mais inaccessible (droits du fichier ou d'un
+// répertoire parent) est une erreur, jamais un repli silencieux sur l'environnement. MustLoad fait de même mais termine en code 2 sur
 // erreur. --help affiche l'usage des flags puis la documentation des variables
 // d'environnement ; --version affiche "<Name> <Version>" et sort en code 0.
 //

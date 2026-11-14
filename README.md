@@ -116,6 +116,10 @@ Charge la configuration depuis un fichier YAML **s'il existe**, sinon depuis l'e
 et câble les flags `--help` / `--version`. Repose sur
 [`cleanenv`](https://github.com/ilyakaznacheev/cleanenv).
 
+Seul un fichier **absent** fait passer à l'environnement : un fichier présent mais
+inaccessible (droits du fichier ou d'un répertoire parent) fait échouer `Load`, plutôt que de
+démarrer l'application sans sa configuration.
+
 ### API
 
 ```go
