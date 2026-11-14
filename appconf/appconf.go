@@ -29,6 +29,10 @@ type Options struct {
 // l'environnement. Il câble --help (avec la doc des variables d'env via
 // cleanenv) et --version.
 //
+// Seul un fichier absent fait passer à l'environnement : un fichier présent mais
+// inaccessible (droits du fichier ou d'un répertoire parent) est une erreur, faute de
+// quoi l'application démarrerait sans sa configuration.
+//
 // Load ne fait jamais os.Exit sur une erreur de chargement : il la renvoie.
 // Les flags terminaux --help et --version, eux, terminent le programme avec le
 // code 0 (comportement standard et attendu).
@@ -85,8 +89,13 @@ func load(cfg any, opts Options, args []string, stdout, stderr io.Writer) error 
 		return errVersion
 	}
 
-	if _, err := os.Stat(*cfgPath); err == nil {
+	_, err := os.Stat(*cfgPath)
+	switch {
+	case err == nil:
 		return cleanenv.ReadConfig(*cfgPath, cfg)
+	case errors.Is(err, os.ErrNotExist):
+		return cleanenv.ReadEnv(cfg)
+	default:
+		return fmt.Errorf("fichier de configuration %s : %w", *cfgPath, err)
 	}
-	return cleanenv.ReadEnv(cfg)
 }

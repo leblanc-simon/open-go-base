@@ -151,3 +151,32 @@ func TestLoadParseError(t *testing.T) {
 		t.Fatalf("err = %v, want a real parse error", err)
 	}
 }
+
+func TestLoadInaccessibleFileIsAnError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root traverse un répertoire sans droits")
+	}
+	dir := filepath.Join(t.TempDir(), "etc")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("web:\n  port: 9090\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Répertoire non traversable : os.Stat échoue sans que le fichier soit absent.
+	if err := os.Chmod(dir, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	var cfg testConfig
+	stdout, stderr := discard()
+	err := load(&cfg, Options{Name: "app", DefaultCfgPath: path}, nil, stdout, stderr)
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("load = %v, want une erreur de permission", err)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("l'erreur ne nomme pas le fichier : %v", err)
+	}
+}
